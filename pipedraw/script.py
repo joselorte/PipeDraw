@@ -5,10 +5,12 @@ a pipeline starts with X in front (``nmrPipe -in`` or ``xyz2pipe -x``), and
 ``TP``/``YTP``/``XY2YX`` swap X and Y, ``ZTP`` swaps X and Z. Dimensions are
 named by NMRPipe header number: X (direct) = F2, Y = F1, Z = F3.
 
-NUS scripts that reconstruct with SMILE (``nusPipe -fn SMILE``) take the
-indirect phases as SMILE arguments (``-xP0 -xP1`` for the first indirect
-dimension, ``-yP0 -yP1`` for the second); the PS steps after the
-reconstruction are left alone.
+NUS scripts that reconstruct with SMILE (``nusPipe -fn SMILE``), as
+basicFT2/3.com writes them, carry each indirect phase twice: as SMILE
+arguments (``-xP0 -xP1`` for the first indirect dimension, ``-yP0 -yP1`` for
+the second), which SMILE uses for its model, and in the PS steps after the
+reconstruction, which phase the spectrum. Both are written; the PS steps are
+read, since they decide what the spectrum looks like.
 """
 import os
 import re
@@ -30,6 +32,7 @@ class PSLine:
     p0: float
     p1: float
     smile_axis: Optional[str] = None   # "x"/"y" when the phase is a SMILE argument
+    post_line: Optional[int] = None    # SMILE: the PS step after reconstruction
 
 # SMILE's axes are the indirect dimensions in order: Y (F1), then Z (F3).
 _SMILE_DIMS = {"x": 1, "y": 3, "z": 4}
@@ -163,13 +166,23 @@ def _smile(text: str):
         end += 1
     block = "\n".join(_code(l) for l in lines[start:end + 1])
     ndim = int(_arg(block, "-nDim") or 2)
+    # After the reconstruction, the indirect dimensions are transformed in
+    # order (first indirect, then second), each with its own PS step.
+    post = [i for i in range(end + 1, len(lines))
+            if re.search(r"-fn\s+PS\b", _code(lines[i]))]
     phases = []
-    for axis in "xyz"[:max(1, ndim - 1)]:
+    for k, axis in enumerate("xyz"[:max(1, ndim - 1)]):
         at = next((i for i in range(start, end + 1)
                    if re.search(rf"-{axis}P0\s+{_NUM}", lines[i])), None)
-        if at is not None:
-            phases.append(PSLine(at, _SMILE_DIMS[axis], _arg(block, f"-{axis}P0"),
-                                 _arg(block, f"-{axis}P1"), smile_axis=axis))
+        if at is None:
+            continue
+        p0, p1 = _arg(block, f"-{axis}P0"), _arg(block, f"-{axis}P1")
+        post_line = post[k] if k < len(post) else None
+        if post_line is not None:
+            code = _code(lines[post_line])
+            p0, p1 = _arg(code, "-p0"), _arg(code, "-p1")
+        phases.append(PSLine(at, _SMILE_DIMS[axis], p0, p1, smile_axis=axis,
+                             post_line=post_line))
     return start, end, phases
 
 
@@ -191,6 +204,8 @@ def set_ps(text: str, pipe_dim: int, p0: float, p1: float) -> str:
             line = re.sub(rf"(-{ps.smile_axis}{name}\s+){_NUM}",
                           lambda m: m.group(1) + _fmt(value), line, count=1)
         lines[ps.line] = line
+        if ps.post_line is not None:
+            lines[ps.post_line] = _rewrite(lines[ps.post_line], p0, p1)
         return "".join(lines)
     if ps is not None:
         lines[ps.line] = _rewrite(lines[ps.line], p0, p1)

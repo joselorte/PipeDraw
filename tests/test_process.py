@@ -29,7 +29,7 @@ xyz2pipe -in tmp/test%05d.ft1 -x -verb \\
 
 xyz2pipe -in ft1/test%05d.ft1 -x -verb \\
 | nmrPipe -fn FT \\
-| nmrPipe -fn PS -p0 0.0 -p1 0.0 -di \\
+| nmrPipe -fn PS -p0 90.0 -p1 0.0 -di \\
 | nmrPipe -fn TP \\
 | nmrPipe -fn ZTP \\
 | pipe2xyz -out ft2/test%05d.ft2 -x -ov
@@ -50,8 +50,23 @@ def test_smile_phases_are_its_arguments():
     new = script.set_ps(script.set_ps(SMILE_COM, 1, -88.5, 2.0), 3, 15.0, 0.0)
     ps = {p.pipe_dim: p for p in script.parse_ps(new)}
     assert (ps[1].p0, ps[1].p1, ps[3].p0) == (-88.5, 2.0, 15.0)
-    # The PS steps after reconstruction are untouched.
-    assert new.count("-fn PS -p0 0.0 -p1 0.0 -di") == 2
+    # Both copies of each indirect phase change, as basicFT3.com writes them:
+    # the SMILE argument and the PS step after the reconstruction.
+    lines = new.splitlines()
+    assert "-xP0 -88.5 -xP1 2.0" in lines[ps[1].line]
+    assert "-p0 -88.5 -p1 2.0" in lines[ps[1].post_line]
+    assert "-yP0 15.0" in lines[ps[3].line] and "-p0 15.0" in lines[ps[3].post_line]
+    assert ps[1].post_line < ps[3].post_line
+
+
+def test_smile_reads_the_applied_phase():
+    """A script whose SMILE argument and PS step disagree (as an earlier
+    PipeDraw left them) reports the PS step, which phases the spectrum."""
+    text = SMILE_COM.replace("-xP0 90.0", "-xP0 45.0")
+    ps = {p.pipe_dim: p for p in script.parse_ps(text)}
+    assert ps[1].p0 == 90.0         # from the PS step after reconstruction
+    fixed = script.set_ps(text, 1, 30.0, 0.0)
+    assert "-xP0 30.0" in fixed and fixed.count("-p0 30.0") == 1
 
 
 def test_arguments_from_settings():
@@ -94,3 +109,44 @@ def test_hsqc_generate_and_process(tmp_path):
     # With the phases from the hand-made script, peaks come out positive.
     strongest = spec.real.flat[np.argmax(np.abs(spec.real))]
     assert strongest > 0
+
+
+HNCA = os.path.join(ROOT, "testdata", "3D", "HNCA")
+
+
+@pytest.mark.skipif(not (os.path.isdir(HNCA) and bruker.have_nmrpipe()
+                         and os.environ.get("PIPEDRAW_SLOW")),
+                    reason="needs testdata/3D/HNCA, NMRPipe and PIPEDRAW_SLOW=1 (~1.5 min)")
+def test_hnca_smile_indirect_phasing(tmp_path):
+    """Phasing 15N/13C through set_ps and reprocessing gives the same spectrum as
+    basicFT3.com with those phases, and differs from the unphased one."""
+    work = tmp_path / "HNCA"
+    work.mkdir()
+    for n in ("acqus", "acqu2s", "acqu3s", "ser", "pulseprogram", "nuslist"):
+        shutil.copy(os.path.join(HNCA, n), work)
+    text = bruker.set_option(bruker.auto_fid_com(str(work))[0], "zMODE", "States-TPPI")
+    (work / "fid.com").write_text(text)
+    subprocess.run(["csh", "fid.com"], cwd=work, check=True, capture_output=True)
+
+    def run(script_text, out):
+        (work / "nmrproc.com").write_text(script_text.replace("ft/test%03d.ft3", out))
+        subprocess.run(["csh", "nmrproc.com"], cwd=work, check=True, capture_output=True)
+        return volume.load(str(work / out)).cube()
+
+    s = procgen.defaults(str(work / "fid" / "test%03d.fid"))
+    gen = tmp_path / "gen.com"
+    subprocess.run(["csh", "-c", procgen.command(s, str(gen))], cwd=work, check=True,
+                   capture_output=True)
+    base_text = gen.read_text()
+    unphased = run(base_text, "a/test%03d.ft3")
+    phased_text = script.set_ps(script.set_ps(base_text, 1, 90.0, 0.0), 3, 45.0, 0.0)
+    ours = run(phased_text, "b/test%03d.ft3")
+
+    s.dims["y"].p0, s.dims["z"].p0 = 90.0, 45.0
+    subprocess.run(["csh", "-c", procgen.command(s, str(gen))], cwd=work, check=True,
+                   capture_output=True)
+    reference = run(gen.read_text(), "c/test%03d.ft3")
+
+    corr = lambda a, b: np.corrcoef(a.ravel(), b.ravel())[0, 1]
+    assert corr(ours, reference) > 0.9999
+    assert corr(ours, unphased) < 0.9
