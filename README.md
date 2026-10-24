@@ -39,6 +39,34 @@ The top bar has three modes (⌘1–3):
 so nmrPipe comes from your `~/.cshrc`. Auto-reload pauses while it runs, and the
 spectrum reloads when it finishes. Click the auto-reload indicator to turn it off.
 
+## Converting Bruker data
+
+Open a Bruker experiment folder (the one with `acqus` and `fid` or `ser`):
+`pipedraw path/to/12`, **File > Open Bruker experiment…** (⇧⌘O), or **Convert** next
+to an experiment on the start page. The **Convert** tab shows:
+
+- **The experiment**: pulse program, nuclei, scans, temperature, data size and,
+  for non-uniform sampling, how many points were sampled.
+- **fid.com**: the folder's existing `fid.com`, or, if there is none, one made
+  by NMRPipe's own converter (`bruker -AUTO`, run in a scratch folder). **Generate
+  from acqus** makes a fresh one. Nothing is written until **Save** or **Convert**;
+  the first save over an existing `fid.com` keeps the old one as `fid.com.bak`.
+- **Conversion parameters**: N, T, mode, sweep width, frequency, carrier and label for
+  each dimension, plus the digital-filter settings. Editing a field rewrites that
+  value in the `bruk2pipe` line; you can also edit the script directly.
+- **Checks against acqus**: modes against FnMODE, point counts, sweep widths,
+  frequencies and digital-filter values, each with a one-click fix. For example,
+  `bruker -AUTO` writes `Complex` for States-TPPI dimensions, which then need
+  `FT -alt` when processing.
+- **Referencing**: carriers with ¹H on water at the sample temperature
+  (7.83 − T/96.9 ppm) and the other nuclei from the IUPAC ratios. **Use water
+  referencing** applies them. This assumes the ¹H carrier was set on water.
+- **NUS**: `fid.com` expands the sampled points onto the full grid (with
+  `nusExpand.tcl`) and writes a sampling mask; reconstruction belongs to processing.
+
+**Convert** saves and runs `fid.com` in the experiment folder; **View FID** then
+opens the result (2D or 3D) to check it.
+
 ## 3D data and FIDs
 
 **3D data** opens the way nmrDraw shows it: one plane at a time. Open a plane series
@@ -98,6 +126,7 @@ reprocessed, matches the correctly processed one exactly.
 ## Limitations of this prototype
 
 - 4D data isn't supported.
+- Conversion covers Bruker data; Varian/Agilent and JEOL come later.
 - On short indirect dimensions (few points), the rebuilt imaginary part is rough,
   so the phased 2D preview can show streaks at low contour levels. The PS values
   are still right; the reprocessed spectrum is clean.

@@ -6,7 +6,7 @@ import subprocess
 import nmrglue as ng
 from PySide6 import QtCore, QtWidgets
 
-from . import script, theme, volume
+from . import bruker, script, theme, volume
 from .widgets import Card, CardHeader, Dot, button, clear_layout, hbox, icon, label, restyle, vbox
 
 Qt = QtCore.Qt
@@ -45,7 +45,18 @@ def _scan(folder, max_subfolders=12):
     its subfolders. A plane series (test001.ft3, test002.ft3, …) is one entry."""
     entries = []
 
+    def experiment(dirpath, shown):
+        try:
+            e = bruker.load_experiment(dirpath)
+        except Exception:  # damaged parameter files
+            return
+        nuclei = " × ".join(theme.nice_label(d.nucleus) for d in e.dims)
+        what = f"Bruker experiment · {e.pulprog}" + (" · NUS" if e.nus else "")
+        entries.append((shown, dirpath, (what, f"{e.ndim}D · {nuclei}")))
+
     def scan(dirpath, prefix):
+        if bruker.is_experiment(dirpath):
+            experiment(dirpath, (prefix or os.path.basename(os.path.abspath(dirpath))) + "")
         try:
             names = sorted(os.listdir(dirpath))
         except OSError:
@@ -81,6 +92,16 @@ def _scan(folder, max_subfolders=12):
         subs = []
     for d in subs[:max_subfolders]:
         scan(os.path.join(folder, d), d + "/")
+        # Bruker data often sits one level deeper (project/2D/4.hsqc).
+        sub = os.path.join(folder, d)
+        try:
+            inner = sorted(n for n in os.listdir(sub) if not n.startswith("."))
+        except OSError:
+            continue
+        for n in inner[:40]:
+            path = os.path.join(sub, n)
+            if os.path.isdir(path) and bruker.is_experiment(path):
+                experiment(path, f"{d}/{n}/")
     return entries
 
 
@@ -232,7 +253,8 @@ class StartPage(QtWidgets.QWidget):
             if path is None:
                 action = entry[3]
             else:
-                action = button("Open", kind="primary" if path == primary else None,
+                action = button("Convert" if os.path.isdir(path) else "Open",
+                                kind="primary" if path == primary else None,
                                 slot=lambda _=False, p=path: self.open_requested.emit(p))
             rows += 1
             for c, cell in enumerate((shown, what, size, action)):

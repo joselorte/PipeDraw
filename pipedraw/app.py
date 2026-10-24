@@ -8,8 +8,9 @@ import numpy as np
 import pyqtgraph as pg
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from . import contours, phase, script, theme, volume
+from . import bruker, contours, phase, script, theme, volume
 from .scriptpanel import ScriptPanel
+from .convertpage import ConvertPage
 from .startpage import StartPage
 from .widgets import (Card, CardHeader, Chip, Dot, FlowLayout, Segmented, StepBadge, Stepper,
                       button, clear_layout, hbox, icon, label, legend_item, restyle, two_line, vbox)
@@ -18,7 +19,7 @@ Qt = QtCore.Qt
 
 AXIS_WIDTH = 56
 AXIS_HEIGHT = 34
-VIEW, PHASE, SCRIPT = 0, 1, 2
+CONVERT, VIEW, PHASE, SCRIPT = 0, 1, 2, 3
 CUBE_LIMIT = 64e6   # 3D data up to this many points are read whole (for planes in
                     # any orientation, projections and finding the strongest plane)
 
@@ -99,6 +100,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.plane_index = 0
         self.proj_kind = None            # 3D: "skyline" or "sum" when showing a projection
         self._forced_view = False
+        self._dims_text = ""
         self.active = 1                  # axis being phased: 1 = X, 0 = Y
         self.mode = PHASE
         self._base_cache = {}
@@ -137,6 +139,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.pages.addWidget(self.start_page)
         self.pages.addWidget(self._build_workspace())
         self.pages.addWidget(self.script_panel)
+        self.convert_page = ConvertPage()
+        self.convert_page.view_requested.connect(self._view_converted)
+        self.convert_page.open_requested.connect(self.open_experiment_dialog)
+        self.pages.addWidget(self.convert_page)
         self._build_footer(root)
         self._build_menus()
 
@@ -177,10 +183,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.crumb_file = label("No spectrum open", "h3")
         self.dims_pill = label("", "pill")
         self.dims_pill.hide()
-        self.mode_seg = Segmented(["View", "Phase", "Script"])
+        self.mode_seg = Segmented(["Convert", "View", "Phase", "Script"])
         self.mode_seg.set_index(PHASE)
         self.mode_seg.changed.connect(self.set_mode)
-        for b, tip in zip(self.mode_seg.buttons, ("⌘1", "⌘2", "⌘3")):
+        for b, tip in zip(self.mode_seg.buttons, ("⌘1", "⌘2", "⌘3", "⌘4")):
             b.setToolTip(tip)
 
         self.reload_btn = QtWidgets.QPushButton()
@@ -243,7 +249,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.level_edit.setValidator(QtGui.QDoubleValidator(1e-30, 1e30, 6))
         self.level_edit.editingFinished.connect(self._level_typed)
         lvl = Stepper(self.level_edit, "Lower contour level (−)", "Raise contour level (+)",
-                      lambda: self.step_level(-1), lambda: self.step_level(1), width=72)
+                      lambda: self.step_level(-1), lambda: self.step_level(1), width=86)
         self.noise_lbl = label("", "muted")
         self.factor_spin = QtWidgets.QDoubleSpinBox(minimum=1.05, maximum=4.0, singleStep=0.05,
                                                     value=1.3)
@@ -529,6 +535,8 @@ class MainWindow(QtWidgets.QMainWindow):
     def _build_menus(self):
         m = self.menuBar().addMenu("&File")
         m.addAction("Open…", QtGui.QKeySequence.Open, self.open_dialog)
+        m.addAction("Open Bruker experiment…", QtGui.QKeySequence("Ctrl+Shift+O"),
+                    self.open_experiment_dialog)
         m.addAction("Reload", QtGui.QKeySequence("Ctrl+R"), self.reload)
         m.addSeparator()
         m.addAction("Open script…", self.script_panel.open_dialog)
@@ -537,7 +545,7 @@ class MainWindow(QtWidgets.QMainWindow):
         m.addSeparator()
         m.addAction("Quit", QtGui.QKeySequence.Quit, self.close)
         m = self.menuBar().addMenu("&View")
-        for i, name in enumerate(("View", "Phase", "Script")):
+        for i, name in enumerate(("Convert", "View", "Phase", "Script")):
             m.addAction(name, QtGui.QKeySequence(f"Ctrl+{i + 1}"),
                         lambda i=i: self.set_mode(i))
         m.addSeparator()
@@ -551,11 +559,14 @@ class MainWindow(QtWidgets.QMainWindow):
         self.mode_seg.set_index(mode)
         if mode == SCRIPT:
             self.pages.setCurrentIndex(2)
+        elif mode == CONVERT:
+            self.pages.setCurrentIndex(3)
         elif self.spec is None:
             self.start_page.refresh(self.start_page.folder, self._recent())
             self.pages.setCurrentIndex(0)
         else:
             self.pages.setCurrentIndex(1)
+        self._update_crumb()
         phasing = mode == PHASE
         self.traces_card.setVisible(phasing)
         self.inspector.setVisible(phasing)
@@ -563,6 +574,25 @@ class MainWindow(QtWidgets.QMainWindow):
             item.setVisible(phasing)
         if self.spec:
             self._redraw_after_phase()
+
+    def _update_crumb(self):
+        """Top bar: the experiment while converting, else the open data."""
+        exp = self.convert_page.exp
+        if self.mode == CONVERT and exp:
+            self.crumb_folder.setText(os.path.basename(os.path.dirname(exp.folder)) + " /")
+            self.crumb_file.setText(os.path.basename(exp.folder))
+            self.dims_pill.setText(f"{exp.ndim}D Bruker · {exp.pulprog}")
+            self.dims_pill.show()
+        elif self.source is not None:
+            path = self.source.path
+            self.crumb_folder.setText(os.path.basename(os.path.dirname(os.path.abspath(path))) + " /")
+            self.crumb_file.setText(os.path.basename(path))
+            self.dims_pill.setText(self._dims_text)
+            self.dims_pill.show()
+        else:
+            self.crumb_folder.setText("")
+            self.crumb_file.setText("No spectrum open")
+            self.dims_pill.hide()
 
     def flash(self, text, ms=6000):
         self.msg_lbl.setText(text)
@@ -631,7 +661,37 @@ class MainWindow(QtWidgets.QMainWindow):
     def _axis(self, pipe_dim):
         return next(ax for ax in self._source_axes() if ax.pipe_dim == pipe_dim)
 
+    def open_experiment_dialog(self):
+        start = self.convert_page.exp.folder if self.convert_page.exp else self.start_page.folder
+        folder = QtWidgets.QFileDialog.getExistingDirectory(
+            self, "Open Bruker experiment (the folder with acqus)", start)
+        if folder:
+            self.open(folder)
+
+    def open_experiment(self, folder):
+        if not self.convert_page.maybe_save():
+            return
+        try:
+            self.convert_page.load(folder)
+        except Exception as exc:  # unreadable parameter files
+            QtWidgets.QMessageBox.critical(self, "Could not read the experiment",
+                                           f"{folder}\n\n{exc}")
+            return
+        self._remember(folder)
+        self.set_mode(CONVERT)
+
+    def _view_converted(self, path):
+        self.open(path)
+        self.set_mode(VIEW)
+
     def open(self, path, keep_view=False):
+        if os.path.isdir(path):
+            if bruker.is_experiment(path):
+                self.open_experiment(path)
+            else:
+                self.start_page.refresh(path, self._recent())
+                self.set_mode(VIEW if self.mode == CONVERT else self.mode)
+            return
         try:
             src = volume.load(path)
         except Exception as exc:  # show any read error to the user
@@ -665,6 +725,7 @@ class MainWindow(QtWidgets.QMainWindow):
             pill += " · FID"
         elif not all(a.is_freq for a in axes):
             pill += " · partly transformed"
+        self._dims_text = pill
         self.dims_pill.setText(pill)
         self.dims_pill.show()
 
@@ -682,7 +743,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self._find_script(src.path)
         self._sync_script_values()
         self._show_view(fit=not same, auto=not same)
-        if self.mode != SCRIPT:
+        if self.mode == CONVERT and not keep_view:
+            self.set_mode(VIEW)       # opening a file from Convert shows it
+        elif self.mode != CONVERT:
             self.set_mode(self.mode)
         self.flash(f"{name}: {' × '.join(str(a.size) for a in axes)} points", 4000)
 
@@ -921,7 +984,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.run_icon.setPixmap(icon(name, fg, 16).pixmap(16, 16))
 
     def closeEvent(self, ev):
-        if self.script_panel.maybe_save():
+        if self.script_panel.maybe_save() and self.convert_page.maybe_save():
             ev.accept()
         else:
             ev.ignore()
