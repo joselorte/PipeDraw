@@ -277,6 +277,26 @@ class ScriptPanel(QtWidgets.QWidget):
         self.refresh_outline()
         self.loaded.emit()
 
+    def unload(self):
+        """Forget the script (after Close)."""
+        self.path = None
+        self.pending = {}
+        self.editor.blockSignals(True)
+        self.editor.clear()
+        self.editor.blockSignals(False)
+        self.editor.document().setModified(False)
+        self.banner.hide()
+        self.log.clear()
+        self._set_status("idle", "Idle")
+        self.elapsed_lbl.setText("")
+        self.file_lbl.setText("No script")
+        self.file_lbl.setToolTip("")
+        self.folder_lbl.setText("")
+        self.dirty_dot.hide()
+        self._set_enabled(False)
+        self.refresh_outline()
+        self.saved_state.emit()
+
     def open_dialog(self):
         start = os.path.dirname(self.path) if self.path else os.getcwd()
         path, _ = QtWidgets.QFileDialog.getOpenFileName(

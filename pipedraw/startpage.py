@@ -107,7 +107,8 @@ def _scan(folder, max_subfolders=12):
 
 class DropZone(QtWidgets.QFrame):
     dropped = QtCore.Signal(str)
-    clicked = QtCore.Signal()
+    clicked = QtCore.Signal()          # choose a file
+    folder_clicked = QtCore.Signal()   # choose an experiment folder
 
     def __init__(self):
         super().__init__()
@@ -120,18 +121,20 @@ class DropZone(QtWidgets.QFrame):
         ic.setFixedSize(48, 48)
         ic.setAlignment(Qt.AlignCenter)
         ic.setStyleSheet(f"background: {theme.ACCENT_SOFT}; border-radius: 12px;")
-        t = label("Drop a spectrum, an FID or one plane of a 3D series here", "h3")
+        t = label("Drop a Bruker experiment folder, an FID or a spectrum here", "h3")
         t.setStyleSheet("font-size: 15px;")
-        s = QtWidgets.QLabel(f"or <a href='#' style='color:{theme.ACCENT}; font-weight:600'>"
-                             f"choose a file</a> · ⌘O")
-        s.linkActivated.connect(lambda _: self.clicked.emit())
+        link = f"style='color:{theme.ACCENT}; font-weight:600'"
+        s = QtWidgets.QLabel(f"or <a href='folder' {link}>choose an experiment folder</a> · ⇧⌘O"
+                             f" &nbsp; or <a href='file' {link}>choose a file</a> · ⌘O")
+        s.linkActivated.connect(lambda which: (self.folder_clicked if which == "folder"
+                                               else self.clicked).emit())
         lay = vbox(None, ic, t, s, None, spacing=10)
         for w in (ic, t, s):
             lay.setAlignment(w, Qt.AlignHCenter)
         self.setLayout(lay)
 
     def mousePressEvent(self, ev):
-        self.clicked.emit()
+        self.folder_clicked.emit()
 
     def dragEnterEvent(self, ev):
         if ev.mimeData().hasUrls():
@@ -155,6 +158,7 @@ class DropZone(QtWidgets.QFrame):
 class StartPage(QtWidgets.QWidget):
     open_requested = QtCore.Signal(str)
     browse_requested = QtCore.Signal()
+    browse_folder_requested = QtCore.Signal()
 
     def __init__(self):
         super().__init__()
@@ -168,13 +172,16 @@ class StartPage(QtWidgets.QWidget):
         self.setLayout(outer)
 
         main = vbox(spacing=20)
-        title = label("Open a spectrum", "h1")
-        sub = label("PipeDraw reads NMRPipe files and picks up the processing script next to them.")
+        title = label("Open data", "h1")
+        sub = label("Convert a Bruker experiment, or open an NMRPipe FID or spectrum. PipeDraw "
+                    "picks up the processing script next to them.")
+        sub.setWordWrap(True)
         sub.setStyleSheet(f"font-size: 14px; color: {theme.TEXT2};")
         main.addLayout(vbox(title, sub, spacing=6))
         self.drop = DropZone()
         self.drop.dropped.connect(self._dropped)
         self.drop.clicked.connect(self.browse_requested)
+        self.drop.folder_clicked.connect(self.browse_folder_requested)
         main.addWidget(self.drop)
 
         self.files_card = Card(margins=(0, 0, 0, 6), spacing=0)
@@ -289,7 +296,9 @@ class StartPage(QtWidgets.QWidget):
             lay.addWidget(label("Spectra you open appear here.", "muted"))
 
     def _dropped(self, path):
-        if os.path.isdir(path):
+        if os.path.isdir(path) and bruker.is_experiment(path):
+            self.open_requested.emit(path)
+        elif os.path.isdir(path):
             self.refresh(path, [])
         else:
             self.open_requested.emit(path)

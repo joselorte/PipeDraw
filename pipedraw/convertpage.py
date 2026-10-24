@@ -220,6 +220,18 @@ class ConvertPage(QtWidgets.QWidget):
         self._show_output_banner()
         self.stack.setCurrentIndex(1)
 
+    def reset(self):
+        """Back to the empty state (no experiment)."""
+        self.exp = self.path = self.fid_script = None
+        self.editor.blockSignals(True)
+        self.editor.clear()
+        self.editor.blockSignals(False)
+        self.editor.document().setModified(False)
+        self.log.clear()
+        self.banner.hide()
+        self._set_status("idle", "Idle")
+        self.stack.setCurrentIndex(0)
+
     def generate(self):
         if not self.exp:
             return

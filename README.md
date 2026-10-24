@@ -21,9 +21,9 @@ cd /path/to/nmrdata
 pipedraw test.ft2
 ```
 
-Run `pipedraw` with no file to get the start page. It lists the NMRPipe files
-in the folder, says which processing script will load with them, shows your
-recent spectra, and checks that nmrPipe can be found. You can drop a file on it.
+Run `pipedraw` with no file and it opens on the **Convert** tab, showing the folder you started in. It lists Bruker experiments (with **Convert** buttons), NMRPipe FIDs and spectra, including those one level down, plus recent items, and checks that nmrPipe can be found. You can drop an experiment folder or a file on it.
+
+**Close** in the top bar (or File > Close dataset, ⌘W) forgets the open experiment, FID, spectrum and script and returns to Convert, listing the closed experiment's neighbours so you can start on the next one.
 
 The top bar has three modes (⌘1–3):
 

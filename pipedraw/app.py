@@ -8,7 +8,7 @@ import numpy as np
 import pyqtgraph as pg
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from . import bruker, contours, phase, script, theme, volume
+from . import bruker, contours, phase, procgen, script, theme, volume
 from .scriptpanel import ScriptPanel
 from .convertpage import ConvertPage
 from .exportpage import ExportPage
@@ -104,7 +104,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._forced_view = False
         self._dims_text = ""
         self.active = 1                  # axis being phased: 1 = X, 0 = Y
-        self.mode = PHASE
+        self.mode = PHASE if path else CONVERT
         self._base_cache = {}
         self.display = None
         self.cursor_idx = (0, 0)         # (iy, ix)
@@ -138,6 +138,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.start_page = StartPage()
         self.start_page.open_requested.connect(self.open)
         self.start_page.browse_requested.connect(self.open_dialog)
+        self.start_page.browse_folder_requested.connect(self.open_experiment_dialog)
         self.pages.addWidget(self.start_page)
         self.pages.addWidget(self._build_workspace())
         self.pages.addWidget(self.script_panel)
@@ -215,18 +216,21 @@ class MainWindow(QtWidgets.QMainWindow):
         self.reload_btn.clicked.connect(self._toggle_auto_reload)
         self.auto_reload_on = True
 
+        self.close_btn = button("Close", slot=self.close_dataset,
+                                tip="Close this dataset and start on another (⌘W)")
+        self.close_btn.hide()
         self.open_btn = button("Open…", icon=icon("folder", theme.TEXT), slot=self.open_dialog,
-                               tip="Open a spectrum (⌘O)")
+                               tip="Open a spectrum or FID (⌘O)")
         self.stop_btn = button("Stop", icon=icon("stop", theme.TEXT, 12),
                                slot=self.script_panel.stop)
         self.stop_btn.hide()
         self.run_btn = button("Run script   ⌘↩", kind="primary", icon=icon("play", "#FFFFFF", 14),
                               slot=self.script_panel.run)
-        for b in (self.open_btn, self.stop_btn, self.run_btn):
+        for b in (self.close_btn, self.open_btn, self.stop_btn, self.run_btn):
             b.setMinimumHeight(34)
         bar.setLayout(hbox(logo, brand, 8, self.crumb_folder, self.crumb_file, self.dims_pill, 8,
-                           self.mode_seg, None, self.reload_btn, self.open_btn, self.stop_btn,
-                           self.run_btn, spacing=8, margins=(16, 8, 16, 8)))
+                           self.mode_seg, None, self.reload_btn, self.close_btn, self.open_btn,
+                           self.stop_btn, self.run_btn, spacing=8, margins=(16, 8, 16, 8)))
         root.addWidget(bar)
 
     def _build_workspace(self):
@@ -549,6 +553,7 @@ class MainWindow(QtWidgets.QMainWindow):
         m.addAction("Open Bruker experiment…", QtGui.QKeySequence("Ctrl+Shift+O"),
                     self.open_experiment_dialog)
         m.addAction("Reload", QtGui.QKeySequence("Ctrl+R"), self.reload)
+        m.addAction("Close dataset", QtGui.QKeySequence.Close, self.close_dataset)
         m.addSeparator()
         m.addAction("Open script…", self.script_panel.open_dialog)
         m.addAction("Save script", QtGui.QKeySequence.Save, self.script_panel.save)
@@ -571,7 +576,12 @@ class MainWindow(QtWidgets.QMainWindow):
         if mode == SCRIPT:
             self.pages.setCurrentIndex(2)
         elif mode == CONVERT:
-            self.pages.setCurrentIndex(3)
+            if self.convert_page.exp is None:
+                # No experiment yet: the folder overview, with Convert buttons.
+                self.start_page.refresh(self.start_page.folder, self._recent())
+                self.pages.setCurrentIndex(0)
+            else:
+                self.pages.setCurrentIndex(3)
         elif mode == EXPORT:
             self.export_page.load(self.source)
             self.pages.setCurrentIndex(5)
@@ -593,6 +603,51 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.spec:
             self._redraw_after_phase()
 
+    def close_dataset(self):
+        """Forget the open experiment, FID and spectrum, and go back to Convert."""
+        if self.script_panel.running or self.convert_page.runner.running:
+            QtWidgets.QMessageBox.information(
+                self, "Still running", "Wait for the running script to finish, or stop it, "
+                "before closing.")
+            return
+        if not (self.script_panel.maybe_save() and self.convert_page.maybe_save()):
+            return
+        # Show the closed data set's neighbours, ready for the next one.
+        if self.convert_page.exp is not None:
+            folder = os.path.dirname(self.convert_page.exp.folder)
+        elif self.source is not None:
+            folder = os.path.dirname(procgen.work_folder(self.source.path))
+        else:
+            folder = self.start_page.folder
+        if self.watcher.files():
+            self.watcher.removePaths(self.watcher.files())
+        self.source = self.spec = self.display = None
+        self.dim_state, self._base_cache = {}, {}
+        self.through, self.plane_index, self.proj_kind = "z", 0, None
+        self._forced_view = self._after_process = False
+        for curve in (self.pos_curve, self.neg_curve, self.hslice, self.vslice):
+            curve.setData([], [])
+        for c in self.trace_curves:
+            self.ptrace.removeItem(c)
+        for ln in self.trace_lines:
+            self.p2d.removeItem(ln)
+        self.trace_curves, self.trace_lines = [], []
+        self.plane_bar.hide()
+        self.mode_seg.buttons[PHASE].setEnabled(True)
+        self.cursor_lbl.setText("")
+        self._set_run_icon(None)
+        self.run_title.setText("No runs yet")
+        self.run_sub.setText("Run the script from the top bar or with ⌘↩.")
+        self.convert_page.reset()
+        self.process_page.reset()
+        self.export_page.load(None)
+        self.script_panel.unload()
+        self.setWindowTitle("PipeDraw")
+        self.start_page.refresh(folder, self._recent())
+        self._update_script_state()
+        self.set_mode(CONVERT)
+        self.flash("Closed. Choose the next experiment or file.", 5000)
+
     def _update_crumb(self):
         """Top bar: the experiment while converting, else the open data."""
         exp = self.convert_page.exp
@@ -609,8 +664,10 @@ class MainWindow(QtWidgets.QMainWindow):
             self.dims_pill.show()
         else:
             self.crumb_folder.setText("")
-            self.crumb_file.setText("No spectrum open")
+            self.crumb_file.setText("No data open")
             self.dims_pill.hide()
+        self.close_btn.setVisible(self.source is not None or self.convert_page.exp is not None
+                                  or self.process_page.settings is not None)
 
     def flash(self, text, ms=6000):
         self.msg_lbl.setText(text)
@@ -793,7 +850,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._sync_script_values()
         self._show_view(fit=not same, auto=not same)
         if self.mode == CONVERT and not keep_view:
-            self.set_mode(VIEW)       # opening a file from Convert shows it
+            self.set_mode(PHASE)      # opening a file from Convert shows it (FIDs: View)
         elif self.mode != CONVERT:
             self.set_mode(self.mode)
         self.flash(f"{name}: {' × '.join(str(a.size) for a in axes)} points", 4000)

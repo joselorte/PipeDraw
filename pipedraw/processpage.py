@@ -152,6 +152,17 @@ class ProcessPage(QtWidgets.QWidget):
         self.stack.setCurrentIndex(1)
         self.regenerate()
 
+    def reset(self):
+        """Back to the empty state (no FID)."""
+        if self.proc is not None:
+            self.proc.kill()
+            self.proc = None
+        self.fid_path = self.folder = self.exp = self.settings = None
+        self.generated = ""
+        self.preview.clear()
+        self.notice.hide()
+        self.stack.setCurrentIndex(0)
+
     def _build_dim_cards(self):
         clear_layout(self.dims_box)
         s = self.settings
