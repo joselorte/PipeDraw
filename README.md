@@ -92,6 +92,24 @@ them there.
 **Process** saves the script, runs it, and opens the spectrum in **Phase** with
 the script loaded, so **Write PS and reprocess** updates it in place.
 
+## Export
+
+The **Export** tab writes the open spectrum for other programs, next to the
+data (for a plane series in `ft/`, in the folder above). File names start from
+the experiment folder's name and can be edited.
+
+- **Sparky (.ucsf)**, for Sparky, POKY and CCPN. If Sparky's `pipe2ucsf` is
+  installed it is used. Otherwise PipeDraw writes the file with nmrglue from its
+  own axes. Either way the file is read back and the data and ppm scales checked.
+- **NMRView (.nv)**, for NMRViewJ and NMRFx: NMRPipe's `pipe2xyz -nv`.
+- **Single-file NMRPipe (3D)**: the plane series as one file (`xyz2pipe | pipe2xyz`).
+
+**Open in** lists NMRFx Analyst, NMRViewJ and CcpNmr Analysis when they are in
+/Applications, with the exported files each can read. NMRViewJ opens a `.nv`
+file directly. NMRFx and CCPN don't accept files from macOS, so PipeDraw starts
+them, shows the file in Finder and copies its path: drag the file onto the
+program's window.
+
 ## 3D data and FIDs
 
 **3D data** opens the way nmrDraw shows it: one plane at a time. Open a plane series
@@ -152,6 +170,9 @@ reprocessed, matches the correctly processed one exactly.
 
 - 4D data isn't supported.
 - Conversion covers Bruker data; Varian/Agilent and JEOL come later.
+- Sparky files written by nmrglue put the carrier at point n/2. NMRFx reads them
+  one point (0.013 ppm ¹H, 0.13 ppm ¹⁵N) off from NMRPipe's scale. Check a known
+  peak in Sparky/POKY, or install POKY so pipe2ucsf is used.
 - On short indirect dimensions (few points), the rebuilt imaginary part is rough,
   so the phased 2D preview can show streaks at low contour levels. The PS values
   are still right; the reprocessed spectrum is clean.

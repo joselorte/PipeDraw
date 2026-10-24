@@ -11,6 +11,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 from . import bruker, contours, phase, script, theme, volume
 from .scriptpanel import ScriptPanel
 from .convertpage import ConvertPage
+from .exportpage import ExportPage
 from .processpage import ProcessPage
 from .startpage import StartPage
 from .widgets import (Card, CardHeader, Chip, Dot, FlowLayout, Segmented, StepBadge, Stepper,
@@ -20,7 +21,7 @@ Qt = QtCore.Qt
 
 AXIS_WIDTH = 56
 AXIS_HEIGHT = 34
-CONVERT, PROCESS, VIEW, PHASE, SCRIPT = 0, 1, 2, 3, 4
+CONVERT, PROCESS, VIEW, PHASE, EXPORT, SCRIPT = 0, 1, 2, 3, 4, 5
 CUBE_LIMIT = 64e6   # 3D data up to this many points are read whole (for planes in
                     # any orientation, projections and finding the strongest plane)
 
@@ -150,6 +151,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.process_page.open_requested.connect(self._choose_fid_for_processing)
         self.process_page.log_requested.connect(lambda: self.set_mode(SCRIPT))
         self.pages.addWidget(self.process_page)
+        self.export_page = ExportPage()
+        self.pages.addWidget(self.export_page)
         self._after_process = False
         self._build_footer(root)
         self._build_menus()
@@ -191,10 +194,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.crumb_file = label("No spectrum open", "h3")
         self.dims_pill = label("", "pill")
         self.dims_pill.hide()
-        self.mode_seg = Segmented(["Convert", "Process", "View", "Phase", "Script"])
+        self.mode_seg = Segmented(["Convert", "Process", "View", "Phase", "Export", "Script"])
         self.mode_seg.set_index(PHASE)
         self.mode_seg.changed.connect(self.set_mode)
-        for b, tip in zip(self.mode_seg.buttons, ("⌘1", "⌘2", "⌘3", "⌘4", "⌘5")):
+        for b, tip in zip(self.mode_seg.buttons, ("⌘1", "⌘2", "⌘3", "⌘4", "⌘5", "⌘6")):
             b.setToolTip(tip)
 
         self.reload_btn = QtWidgets.QPushButton()
@@ -553,7 +556,7 @@ class MainWindow(QtWidgets.QMainWindow):
         m.addSeparator()
         m.addAction("Quit", QtGui.QKeySequence.Quit, self.close)
         m = self.menuBar().addMenu("&View")
-        for i, name in enumerate(("Convert", "Process", "View", "Phase", "Script")):
+        for i, name in enumerate(("Convert", "Process", "View", "Phase", "Export", "Script")):
             m.addAction(name, QtGui.QKeySequence(f"Ctrl+{i + 1}"),
                         lambda i=i: self.set_mode(i))
         m.addSeparator()
@@ -569,6 +572,9 @@ class MainWindow(QtWidgets.QMainWindow):
             self.pages.setCurrentIndex(2)
         elif mode == CONVERT:
             self.pages.setCurrentIndex(3)
+        elif mode == EXPORT:
+            self.export_page.load(self.source)
+            self.pages.setCurrentIndex(5)
         elif mode == PROCESS:
             if self.process_page.settings is None and self._is_fid(self.source):
                 self.process_page.load(self.source.path, self.convert_page.exp)
