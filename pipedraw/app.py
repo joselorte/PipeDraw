@@ -8,7 +8,7 @@ import numpy as np
 import pyqtgraph as pg
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from . import bruker, contours, phase, procgen, script, theme, volume
+from . import autophase, bruker, contours, phase, procgen, script, theme, volume
 from .scriptpanel import ScriptPanel
 from .convertpage import ConvertPage
 from .exportpage import ExportPage
@@ -424,7 +424,19 @@ class MainWindow(QtWidgets.QMainWindow):
         self.phase_note.hide()
         card.body.addWidget(self.phase_note)
         self.phase_body = QtWidgets.QWidget()
-        body = vbox(self.dim_seg, spacing=14)
+        self.auto_btn = button("Auto phase", kind="primary", slot=self.auto_phase,
+                               tip="¹H: NMRPipe's autophaser on the FID. Indirect: fit to the "
+                                   "phase at the strongest peaks of the shown plane.")
+        self.auto_p1 = QtWidgets.QCheckBox("Fit P1")
+        self.auto_p1.setToolTip("Also fit first order (peak method). Usually off for indirect "
+                                "dimensions, whose P1 is set by the pulse sequence.")
+        flip = button("Flip 180°", slot=self.flip_phase, tip="Add 180° to P0 (inverts the peaks)")
+        self.auto_lbl = label("", "muted")
+        self.auto_lbl.setWordWrap(True)
+        self.auto_lbl.hide()
+        auto = vbox(hbox(self.auto_btn, self.auto_p1, None, flip, spacing=8), self.auto_lbl,
+                    spacing=4)
+        body = vbox(self.dim_seg, auto, spacing=14)
         self.phase_body.setLayout(body)
         card.body.addWidget(self.phase_body)
 
@@ -1374,6 +1386,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _dim_changed(self, i):
         self.active = 1 if i == 0 else 0
+        self._auto_note("")
         self._load_phase_widgets()
         if self.spec:
             self._update_traces()
@@ -1491,6 +1504,87 @@ class MainWindow(QtWidgets.QMainWindow):
         iy, ix = self.cursor_idx
         ax = self.spec.axes[self.active]
         self._set_pivot(ax.coords[ix if self.active == 1 else iy])
+
+    def auto_phase(self):
+        """Fill in P0 (and P1) for the dimension being phased."""
+        if not self.spec or getattr(self, "_ap_proc", None) is not None:
+            return
+        a = self.active
+        ax = self.spec.axes[a]
+        sp = self.script_panel
+        fid = autophase.script_fid(sp.text()) if sp.path else None
+        if ax.pipe_dim == 2 and fid and not self.proj_kind and bruker.have_nmrpipe():
+            # Direct dimension: NMRPipe's autophaser on the FID, given the
+            # current indirect phases (they decide the peaks' sign).
+            y0, y1 = self._total_dim(1) if 1 in self.dim_state else (0.0, 0.0)
+            x1 = self._total_dim(2)[1]
+            cmd = autophase.nmrpipe_command(fid, x1, y0, y1)
+            self._ap_proc = proc = QtCore.QProcess(self)
+            proc.setWorkingDirectory(os.path.dirname(sp.path))
+            proc.setProcessChannelMode(QtCore.QProcess.MergedChannels)
+            proc.finished.connect(lambda code, _s: self._nmrpipe_autophase_done(proc, code))
+            self.auto_btn.setEnabled(False)
+            self._auto_note("Running NMRPipe's autophase on the FID…")
+            proc.start("/bin/csh", ["-c", cmd])
+            return
+        s = self.state[a]
+        base = self._base_complex(a)
+        own = bool(s.traces)
+        traces = list(s.traces) or autophase.pick_traces(base.real, a)
+        vecs = [base[t] if a == 1 else base[:, t] for t in traces]
+        try:
+            p0, p1, agree, n = autophase.from_peaks(vecs, ax, s.pivot,
+                                                    fit_p1=self.auto_p1.isChecked())
+        except ValueError as exc:
+            self._auto_note(f"Auto phase: {exc} Pick traces through clear peaks first.")
+            return
+        s.p0, s.p1 = p0, p1
+        if not s.traces:
+            # Show a few of the traces used: the strongest, spread out.
+            gap = max(3, self.spec.axes[1 - a].size // 30)
+            for t in traces:
+                if all(abs(t - u) >= gap for u in s.traces):
+                    s.traces.append(t)
+                if len(s.traces) == 4:
+                    break
+        self._apply_phase_change()
+        where = "your traces" if own else f"the {len(traces)} strongest traces"
+        self._auto_note(f"From {n} peaks in {where}; they agree {agree:.0%}. A starting "
+                        "point: check the traces, then fine-tune or Flip 180° if needed.")
+
+    def _nmrpipe_autophase_done(self, proc, code):
+        self._ap_proc = None
+        self.auto_btn.setEnabled(True)
+        out = bytes(proc.readAll()).decode(errors="replace")
+        if code != 0 or not self.spec:
+            self._auto_note("NMRPipe's autophase failed:\n" + out[-300:])
+            return
+        try:
+            total = autophase.parse_nmrpipe(out)
+        except ValueError as exc:
+            self._auto_note(str(exc))
+            return
+        s, ax = self.dim_state[2], self._axis(2)
+        # Keep P1; set P0 so the script's total becomes NMRPipe's value.
+        s.p0 = phase.wrap(total - s.script_p0 + s.p1 * s.pivot / ax.ftsize)
+        self._apply_phase_change()
+        self._auto_note(f"NMRPipe's autophase: P0 {total:.1f}° (zero order, from the FID). "
+                        "Fine-tune if needed.")
+
+    def flip_phase(self):
+        if self.spec:
+            s = self.state[self.active]
+            s.p0 = phase.wrap(s.p0 + 180.0)
+            self._apply_phase_change()
+
+    def _apply_phase_change(self):
+        self._load_phase_widgets()
+        self._update_traces()
+        self._redraw_after_phase()
+
+    def _auto_note(self, text):
+        self.auto_lbl.setText(text)
+        self.auto_lbl.setVisible(bool(text))
 
     def reset_phase(self):
         if not self.spec:

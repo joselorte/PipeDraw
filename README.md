@@ -153,6 +153,24 @@ keeping their layout, then saves, runs and reloads. **Write only** saves without
 running; the script then shows a banner with **Undo change**. If a dimension has
 no PS step, one is added after its FT.
 
+**Auto phase** (Phase panel, for the dimension selected) gives a starting point:
+
+- **¹H (direct dimension):** NMRPipe's `basicAutoPhase.com` runs on the FID named in
+  the processing script, using the current indirect phases (they decide the
+  peaks' sign). It works on the true complex data, before EXT and `-di`. The
+  Process tab has the same thing as **Auto** next to the ¹H phase.
+- **Indirect dimensions:** PipeDraw fits the phase at the strongest peaks of the
+  plane on screen. At a peak's centre the dispersive part is zero, so the angle
+  there is that peak's phase error. It fits zero order (tick **Fit P1** for first
+  order) and works with negative peaks. It uses your traces, or picks the
+  strongest ones and adds a few so you can check them.
+- **Flip 180°** inverts the peaks, for when the wrong sign was chosen.
+
+On the TROSY-HSQC in testdata, both land within about 10–15° of careful hand
+phasing, and the reprocessed spectrum has all strong peaks positive. Expect to
+fine-tune. Entropy minimisation (ACME) and peak-area scores were tried first;
+noise, negative peaks and the dispersive tails of neighbouring peaks biased them.
+
 PS lines are matched to dimensions by following the script's TP steps. P1 and the
 pivot follow NMRPipe's convention (P1 runs across the full spectral width at the
 time PS runs), so values stay right after `EXT`. This was checked against

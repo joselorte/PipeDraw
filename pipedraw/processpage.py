@@ -4,7 +4,9 @@ import tempfile
 
 from PySide6 import QtCore, QtWidgets
 
-from . import procgen, theme, volume
+import subprocess
+
+from . import autophase, procgen, theme, volume
 from .scriptpanel import CodeEditor
 from .widgets import Card, CardHeader, button, clear_layout, hbox, icon, label, vbox
 
@@ -202,6 +204,11 @@ class ProcessPage(QtWidgets.QWidget):
             grid.addWidget(label("Phase P0 / P1", "muted"), 6, 0)
             grid.addWidget(w["p0"], 6, 1)
             grid.addWidget(w["p1"], 6, 2)
+            if d == "x":
+                auto = button("Auto", slot=self._auto_x,
+                              tip="NMRPipe's autophaser (basicAutoPhase.com) on the FID, "
+                                  "using the indirect phases set here")
+                grid.addWidget(auto, 6, 3)
             row = 7
             if d == "x":
                 w["sol"] = QtWidgets.QCheckBox("Solvent filter (SOL)", checked=s.solvent)
@@ -230,6 +237,26 @@ class ProcessPage(QtWidgets.QWidget):
             card.body.addLayout(grid)
             self.dims_box.addWidget(card)
             self.dim_widgets[d] = w
+
+    def _auto_x(self):
+        """Zero-order phase for the direct dimension from NMRPipe's autophaser."""
+        self._read_form()
+        s = self.settings
+        y = s.dims.get("y")
+        cmd = autophase.nmrpipe_command(s.fid, s.dims["x"].p1, y.p0 if y else 0.0,
+                                        y.p1 if y else 0.0, y.ft if y else "None")
+        QtWidgets.QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            r = subprocess.run(["csh", "-c", cmd], cwd=self.folder, capture_output=True,
+                               text=True, timeout=300)
+            p0 = autophase.parse_nmrpipe(r.stdout + r.stderr)
+        except Exception as exc:  # show NMRPipe's message
+            QtWidgets.QApplication.restoreOverrideCursor()
+            QtWidgets.QMessageBox.warning(self, "Auto phase", str(exc))
+            return
+        QtWidgets.QApplication.restoreOverrideCursor()
+        self.dim_widgets["x"]["p0"].setText(f"{p0:.1f}")
+        self._changed()
 
     def _combo(self, items, current):
         c = QtWidgets.QComboBox()
