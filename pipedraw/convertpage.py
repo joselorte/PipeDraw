@@ -21,6 +21,7 @@ class ConvertPage(QtWidgets.QWidget):
     view_requested = QtCore.Signal(str)      # path of the converted FID
     open_requested = QtCore.Signal()         # pick an experiment folder
     converted = QtCore.Signal(str)
+    process_requested = QtCore.Signal(str)   # path of the converted FID
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -160,9 +161,11 @@ class ConvertPage(QtWidgets.QWidget):
         self.banner.setObjectName("banner")
         self.banner_lbl = label("")
         self.banner_lbl.setWordWrap(True)
-        self.view_btn = button("View FID", kind="primary", slot=self._view)
-        self.banner.setLayout(hbox(self.banner_lbl, None, self.view_btn, spacing=10,
-                                   margins=(14, 8, 14, 8)))
+        self.view_btn = button("View FID", slot=self._view)
+        self.next_btn = button("Next: Process  →", kind="primary", slot=self._process,
+                               tip="Write a processing script for this FID")
+        self.banner.setLayout(hbox(self.banner_lbl, None, self.view_btn, self.next_btn,
+                                   spacing=10, margins=(14, 8, 14, 8)))
         self.banner.hide()
         ed_card.body.addWidget(self.banner)
         self.editor = CodeEditor()
@@ -337,6 +340,11 @@ class ConvertPage(QtWidgets.QWidget):
                                 "and the first points look right." if just_converted
                                 else f"{name} already exists in this folder.")
         self.banner.show()
+
+    def _process(self):
+        out = self.output_path()
+        if self._output_exists(out):
+            self.process_requested.emit(out)
 
     def _view(self):
         out = self.output_path()

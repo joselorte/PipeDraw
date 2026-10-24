@@ -67,6 +67,31 @@ to an experiment on the start page. The **Convert** tab shows:
 **Convert** saves and runs `fid.com` in the experiment folder; **View FID** then
 opens the result (2D or 3D) to check it.
 
+## Processing: FID → nmrproc.com → spectrum
+
+After converting, **Next: Process** (or the **Process** tab with an FID open)
+shows the processing settings for each dimension:
+
+- window (sine bell or Lorentz-to-Gauss), line broadening, first-point scaling;
+- zero filling, FT options (`-alt` is preselected when States-TPPI data were
+  converted as Complex), phases;
+- for the direct dimension: the region to keep, solvent filter, baseline;
+- for indirect dimensions of uniformly sampled data: linear prediction.
+
+On the right is the `nmrproc.com` that NMRPipe's own `basicFT2.com` /
+`basicFT3.com` writes for these settings, updated as you change them. Defaults
+follow basicFT's, including its amide defaults for HN-detected data (solvent
+filter, baseline, keep 3–47%). If the folder already has an `nmrproc.com`, its
+phases are used as the starting point, and saving keeps the old script as
+`nmrproc.com.bak`.
+
+**NUS data** (a `nuslist` in the folder) is reconstructed with SMILE. Its
+indirect phases are SMILE arguments (`-xP0`, `-yP0`), and the Phase step writes
+them there.
+
+**Process** saves the script, runs it, and opens the spectrum in **Phase** with
+the script loaded, so **Write PS and reprocess** updates it in place.
+
 ## 3D data and FIDs
 
 **3D data** opens the way nmrDraw shows it: one plane at a time. Open a plane series

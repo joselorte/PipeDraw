@@ -4,6 +4,11 @@ Each ``-fn PS`` line is assigned to a dimension by following the pipeline:
 a pipeline starts with X in front (``nmrPipe -in`` or ``xyz2pipe -x``), and
 ``TP``/``YTP``/``XY2YX`` swap X and Y, ``ZTP`` swaps X and Z. Dimensions are
 named by NMRPipe header number: X (direct) = F2, Y = F1, Z = F3.
+
+NUS scripts that reconstruct with SMILE (``nusPipe -fn SMILE``) take the
+indirect phases as SMILE arguments (``-xP0 -xP1`` for the first indirect
+dimension, ``-yP0 -yP1`` for the second); the PS steps after the
+reconstruction are left alone.
 """
 import os
 import re
@@ -24,6 +29,10 @@ class PSLine:
     pipe_dim: int    # NMRPipe dimension number (2 = direct in 2D, 1 = indirect)
     p0: float
     p1: float
+    smile_axis: Optional[str] = None   # "x"/"y" when the phase is a SMILE argument
+
+# SMILE's axes are the indirect dimensions in order: Y (F1), then Z (F3).
+_SMILE_DIMS = {"x": 1, "y": 3, "z": 4}
 
 
 def find_script(*folders) -> Optional[str]:
@@ -132,8 +141,36 @@ def _summary(fn: str, code: str) -> str:
 
 def parse_ps(text: str) -> list:
     """All PS steps in the script, with the dimension each one acts on."""
-    return [PSLine(i, DIM_OF[front], _arg(code, "-p0"), _arg(code, "-p1"))
-            for i, code, fn, front in _walk(text) if fn == "PS" and front in DIM_OF]
+    smile = _smile(text)
+    found = [PSLine(i, DIM_OF[front], _arg(code, "-p0"), _arg(code, "-p1"))
+             for i, code, fn, front in _walk(text)
+             if fn == "PS" and front in DIM_OF and not (smile and i > smile[1])]
+    if smile:
+        found.extend(smile[2])
+    return sorted(found, key=lambda ps: ps.line)
+
+
+def _smile(text: str):
+    """(first line, last line, PSLines for its phase arguments) of a SMILE
+    reconstruction command, or None."""
+    lines = text.splitlines()
+    start = next((i for i, l in enumerate(lines)
+                  if re.search(r"nusPipe\s+-fn\s+SMILE", _code(l))), None)
+    if start is None:
+        return None
+    end = start
+    while end + 1 < len(lines) and _code(lines[end]).rstrip().endswith("\\"):
+        end += 1
+    block = "\n".join(_code(l) for l in lines[start:end + 1])
+    ndim = int(_arg(block, "-nDim") or 2)
+    phases = []
+    for axis in "xyz"[:max(1, ndim - 1)]:
+        at = next((i for i in range(start, end + 1)
+                   if re.search(rf"-{axis}P0\s+{_NUM}", lines[i])), None)
+        if at is not None:
+            phases.append(PSLine(at, _SMILE_DIMS[axis], _arg(block, f"-{axis}P0"),
+                                 _arg(block, f"-{axis}P1"), smile_axis=axis))
+    return start, end, phases
 
 
 def ps_for_dim(text: str, pipe_dim: int) -> Optional[PSLine]:
@@ -148,6 +185,13 @@ def set_ps(text: str, pipe_dim: int, p0: float, p1: float) -> str:
     """Script text with the PS values for ``pipe_dim`` replaced (or a PS step added)."""
     lines = text.splitlines(keepends=True)
     ps = ps_for_dim(text, pipe_dim)
+    if ps is not None and ps.smile_axis:
+        line = lines[ps.line]
+        for name, value in (("P0", p0), ("P1", p1)):
+            line = re.sub(rf"(-{ps.smile_axis}{name}\s+){_NUM}",
+                          lambda m: m.group(1) + _fmt(value), line, count=1)
+        lines[ps.line] = line
+        return "".join(lines)
     if ps is not None:
         lines[ps.line] = _rewrite(lines[ps.line], p0, p1)
         return "".join(lines)

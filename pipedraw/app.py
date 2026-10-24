@@ -11,6 +11,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 from . import bruker, contours, phase, script, theme, volume
 from .scriptpanel import ScriptPanel
 from .convertpage import ConvertPage
+from .processpage import ProcessPage
 from .startpage import StartPage
 from .widgets import (Card, CardHeader, Chip, Dot, FlowLayout, Segmented, StepBadge, Stepper,
                       button, clear_layout, hbox, icon, label, legend_item, restyle, two_line, vbox)
@@ -19,7 +20,7 @@ Qt = QtCore.Qt
 
 AXIS_WIDTH = 56
 AXIS_HEIGHT = 34
-CONVERT, VIEW, PHASE, SCRIPT = 0, 1, 2, 3
+CONVERT, PROCESS, VIEW, PHASE, SCRIPT = 0, 1, 2, 3, 4
 CUBE_LIMIT = 64e6   # 3D data up to this many points are read whole (for planes in
                     # any orientation, projections and finding the strongest plane)
 
@@ -143,6 +144,13 @@ class MainWindow(QtWidgets.QMainWindow):
         self.convert_page.view_requested.connect(self._view_converted)
         self.convert_page.open_requested.connect(self.open_experiment_dialog)
         self.pages.addWidget(self.convert_page)
+        self.convert_page.process_requested.connect(self.start_processing)
+        self.process_page = ProcessPage()
+        self.process_page.process_requested.connect(self._run_processing)
+        self.process_page.open_requested.connect(self._choose_fid_for_processing)
+        self.process_page.log_requested.connect(lambda: self.set_mode(SCRIPT))
+        self.pages.addWidget(self.process_page)
+        self._after_process = False
         self._build_footer(root)
         self._build_menus()
 
@@ -183,10 +191,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.crumb_file = label("No spectrum open", "h3")
         self.dims_pill = label("", "pill")
         self.dims_pill.hide()
-        self.mode_seg = Segmented(["Convert", "View", "Phase", "Script"])
+        self.mode_seg = Segmented(["Convert", "Process", "View", "Phase", "Script"])
         self.mode_seg.set_index(PHASE)
         self.mode_seg.changed.connect(self.set_mode)
-        for b, tip in zip(self.mode_seg.buttons, ("⌘1", "⌘2", "⌘3", "⌘4")):
+        for b, tip in zip(self.mode_seg.buttons, ("⌘1", "⌘2", "⌘3", "⌘4", "⌘5")):
             b.setToolTip(tip)
 
         self.reload_btn = QtWidgets.QPushButton()
@@ -545,7 +553,7 @@ class MainWindow(QtWidgets.QMainWindow):
         m.addSeparator()
         m.addAction("Quit", QtGui.QKeySequence.Quit, self.close)
         m = self.menuBar().addMenu("&View")
-        for i, name in enumerate(("Convert", "View", "Phase", "Script")):
+        for i, name in enumerate(("Convert", "Process", "View", "Phase", "Script")):
             m.addAction(name, QtGui.QKeySequence(f"Ctrl+{i + 1}"),
                         lambda i=i: self.set_mode(i))
         m.addSeparator()
@@ -561,6 +569,10 @@ class MainWindow(QtWidgets.QMainWindow):
             self.pages.setCurrentIndex(2)
         elif mode == CONVERT:
             self.pages.setCurrentIndex(3)
+        elif mode == PROCESS:
+            if self.process_page.settings is None and self._is_fid(self.source):
+                self.process_page.load(self.source.path, self.convert_page.exp)
+            self.pages.setCurrentIndex(4)
         elif self.spec is None:
             self.start_page.refresh(self.start_page.folder, self._recent())
             self.pages.setCurrentIndex(0)
@@ -679,6 +691,37 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         self._remember(folder)
         self.set_mode(CONVERT)
+
+    def _is_fid(self, src):
+        if src is None:
+            return False
+        axes = src.axes if isinstance(src, volume.Volume) else [src.x, src.y]
+        return not any(a.is_freq for a in axes)
+
+    def start_processing(self, fid_path):
+        """Process step for a converted FID."""
+        exp = self.convert_page.exp
+        self.process_page.load(fid_path, exp)
+        self.set_mode(PROCESS)
+
+    def _choose_fid_for_processing(self):
+        start = self.start_page.folder
+        path, _ = QtWidgets.QFileDialog.getOpenFileName(
+            self, "Choose an NMRPipe FID", start, "NMRPipe FID (*.fid *.dat);;All files (*)")
+        if path:
+            template = volume.series_template(path) if volume.read_header(path)["FDDIMCOUNT"] >= 3 else None
+            self.start_processing(template or path)
+
+    def _run_processing(self, script_path):
+        sp = self.script_panel
+        if sp.running or not sp.maybe_save():
+            return
+        sp.load(script_path)
+        self._after_process = True
+        self.process_page.set_running(
+            True, "Processing… the spectrum opens for phasing when it finishes. "
+                  "NUS reconstruction can take a few minutes.")
+        sp.run()
 
     def _view_converted(self, path):
         self.open(path)
@@ -950,6 +993,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self._update_script_state()
         self._update_reload_indicator()
         secs = self.script_panel.last_run[1] if self.script_panel.last_run else 0.0
+        after_process, self._after_process = self._after_process, False
+        if after_process:
+            self.process_page.set_running(
+                False, "" if code == 0 else f"Processing failed (exit {code}).")
         if code != 0:
             self._set_run_icon("failed")
             self.run_title.setText(f"Last run failed · exit {code}")
@@ -960,14 +1007,17 @@ class MainWindow(QtWidgets.QMainWindow):
                 self._draw_trace_curves()
             return
         out = script.output_file(self.script_panel.text())
-        out_path = os.path.join(os.path.dirname(self.script_panel.path), out) if out else None
-        src_path = self.source.path if self.source else None
-        if self.source and (out_path is None or "%" in out_path or "%" in src_path
-                            or not os.path.exists(out_path)
-                            or os.path.samefile(out_path, src_path)):
+        out_path = (os.path.normpath(os.path.join(os.path.dirname(self.script_panel.path), out))
+                    if out else None)
+        out_exists = out_path is not None and (
+            volume.first_plane(out_path) is not None if "%" in out_path else os.path.exists(out_path))
+        src_path = os.path.normpath(os.path.abspath(self.source.path)) if self.source else None
+        if out_exists and out_path != src_path:
+            self.open(out_path)               # a new spectrum, e.g. after Process
+            if after_process:
+                self.set_mode(PHASE if not self._is_fid(self.source) else VIEW)
+        elif self.source:
             self.reload(after_run=True)
-        elif out_path and ("%" in out_path or os.path.exists(out_path)):
-            self.open(out_path)
         self._set_run_icon("ok")
         self.run_title.setText(f"Last run finished · {secs:.1f} s")
         shown = os.path.basename(self.source.path) if self.source else "Output"
