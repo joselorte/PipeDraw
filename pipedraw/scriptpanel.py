@@ -6,7 +6,8 @@ import subprocess
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from . import script, theme
-from .widgets import Card, CardHeader, Dot, button, clear_layout, hbox, icon, label, restyle, vbox
+from .widgets import (Card, CardHeader, Dot, button, clear_layout, hbox, heading, icon, label,
+                      restyle, vbox)
 
 Qt = QtCore.Qt
 
@@ -176,10 +177,8 @@ class ScriptPanel(QtWidgets.QWidget):
         # Pipeline outline
         self.outline = Card(spacing=6)
         self.outline.setFixedWidth(300)
-        self.outline.body.addWidget(label("Pipeline", "h2"))
-        hint = label("Read from the script. Click a step to jump to its line.", "muted")
-        hint.setWordWrap(True)
-        self.outline.body.addWidget(hint)
+        self.outline.body.addWidget(heading("Pipeline", "Read from the script. Click a step to "
+                                                        "jump to its line."))
         self.outline_list = vbox(spacing=6)
         self.outline.body.addLayout(self.outline_list)
         self.outline.body.addStretch(1)

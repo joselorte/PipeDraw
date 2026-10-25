@@ -316,9 +316,10 @@ def format_value(field_name: str, value: float) -> str:
 @dataclass
 class Check:
     level: str                 # "ok", "warn"
-    text: str
+    text: str                  # short, shown
     fix: Optional[tuple] = None   # (option, value) that would resolve it
     fix_label: str = ""
+    detail: str = ""           # longer explanation, for a tooltip
 
 
 def match_dims(exp: Experiment, fs: FidScript) -> dict:
@@ -344,32 +345,32 @@ def checks(exp: Experiment, fs: FidScript) -> list:
         have = _num(fs.options.get(opt))
         if want is not None and have is not None and float(want) >= 0 \
                 and abs(have - float(want)) > 1e-3:
-            found.append(Check("warn", f"-{opt} is {fs.options[opt]} but acqus {key} is {want}.",
+            found.append(Check("warn", f"-{opt} {fs.options[opt]}, acqus {key} {want}",
                                (opt, str(want)), f"Use {want}"))
     for d, dim in match_dims(exp, fs).items():
         name = d.upper()
         p = fs.dims[d]
         sw, obs = _num(p.get("SW")), _num(p.get("OBS"))
         if sw is not None and abs(sw - dim.sw_hz) > 0.01:
-            found.append(Check("warn", f"{name} sweep width {p['SW']} Hz; acquired {dim.sw_hz:.3f} Hz.",
+            found.append(Check("warn", f"{name} sweep width {p['SW']}, acquired {dim.sw_hz:.3f} Hz",
                                (f"{d}SW", f"{dim.sw_hz:.3f}"), f"Use {dim.sw_hz:.3f}"))
         if obs is not None and abs(obs - dim.sfo1) > 0.001:
-            found.append(Check("warn", f"{name} frequency {p['OBS']} MHz; acquired {dim.sfo1:.3f} MHz.",
+            found.append(Check("warn", f"{name} frequency {p['OBS']}, acquired {dim.sfo1:.3f} MHz",
                                (f"{d}OBS", f"{dim.sfo1:.3f}"), f"Use {dim.sfo1:.3f}"))
         if d == "x":
             continue
         n = _num(p.get("N"))
         want_n = dim.nus_td if exp.nus and dim.nus_td else dim.td
         if n is not None and want_n and int(n) != want_n:
-            found.append(Check("warn", f"{name} has {int(n)} points; acquired {want_n}.",
+            found.append(Check("warn", f"{name} points {int(n)}, acquired {want_n}",
                                (f"{d}N", str(want_n)), f"Use {want_n}"))
         expected = FNMODE.get(dim.fnmode, (None, None))[1]
         mode = p.get("MODE", "")
         same = mode == expected or {mode, expected} <= {"Complex", "States"}
         if expected and not same:
-            hint = (" Complex with States-TPPI data needs FT -alt when processing."
+            hint = (" Kept as Complex, the data need FT -alt when processing."
                     if expected == "States-TPPI" and mode == "Complex" else "")
-            found.append(Check("warn", f"{name} mode is {mode}, but the acquisition used "
-                                       f"{dim.mode_name} (FnMODE {dim.fnmode}).{hint}",
-                               (f"{d}MODE", expected), f"Use {expected}"))
+            found.append(Check("warn", f"{name} mode {mode}, acquired {dim.mode_name}",
+                               (f"{d}MODE", expected), f"Use {expected}",
+                               detail=f"Bruker FnMODE {dim.fnmode} ({dim.mode_name}).{hint}"))
     return found

@@ -6,8 +6,8 @@ from PySide6 import QtCore, QtGui, QtWidgets
 from . import bruker, theme
 from .runner import CshRunner
 from .scriptpanel import CodeEditor
-from .widgets import (Card, CardHeader, Dot, FlowLayout, button, clear_layout, hbox, icon, label,
-                      restyle, vbox)
+from .widgets import (Card, CardHeader, Dot, FlowLayout, InfoTip, button, clear_layout, hbox,
+                      heading, icon, label, restyle, vbox)
 
 Qt = QtCore.Qt
 
@@ -49,16 +49,11 @@ class ConvertPage(QtWidgets.QWidget):
         w = QtWidgets.QWidget()
         card = Card(margins=(28, 28, 28, 28), spacing=12)
         card.setMaximumWidth(560)
-        t = label("Convert a Bruker experiment", "h2")
-        s = label("Choose an experiment folder: the one with acqus and fid or ser in it. "
-                  "PipeDraw asks NMRPipe's bruker converter for a fid.com, checks it "
-                  "against the acquisition parameters and runs it.", "muted")
-        s.setWordWrap(True)
         b = button("Choose experiment folder…", kind="primary", icon=icon("folder", "#FFFFFF"),
-                   slot=self.open_requested)
+                   slot=self.open_requested,
+                   tip="The folder with acqus and fid or ser")
         b.setMinimumHeight(36)
-        card.body.addWidget(t)
-        card.body.addWidget(s)
+        card.body.addWidget(label("Convert a Bruker experiment", "h2"))
         card.body.addWidget(b, 0, Qt.AlignLeft)
         w.setLayout(vbox(None, hbox(None, card, None), None, margins=(16, 16, 16, 16)))
         return w
@@ -86,7 +81,9 @@ class ConvertPage(QtWidgets.QWidget):
 
         # Parameters
         par = Card(spacing=10)
-        par.body.addWidget(label("Conversion parameters", "h2"))
+        par.body.addWidget(heading("Conversion parameters",
+                                   "Editing a field rewrites that value in fid.com's bruk2pipe "
+                                   "line. You can also edit fid.com directly."))
         self.param_grid = QtWidgets.QGridLayout()
         self.param_grid.setHorizontalSpacing(8)
         self.param_grid.setVerticalSpacing(6)
@@ -95,23 +92,24 @@ class ConvertPage(QtWidgets.QWidget):
         self.option_grid.setHorizontalSpacing(8)
         self.option_grid.setVerticalSpacing(6)
         par.body.addLayout(self.option_grid)
-        hint = label("Edits here rewrite the bruk2pipe line in fid.com; you can also edit "
-                     "the script directly.", "muted")
-        hint.setWordWrap(True)
-        par.body.addWidget(hint)
         self.left.addWidget(par)
 
         # Checks
         self.check_card = Card(spacing=8)
-        self.check_card.body.addWidget(label("Checks against acqus", "h2"))
+        self.check_card.body.addWidget(heading("Checks",
+                                               "fid.com compared with the acquisition "
+                                               "parameters in acqus."))
         self.check_list = vbox(spacing=8)
         self.check_card.body.addLayout(self.check_list)
         self.left.addWidget(self.check_card)
 
         # Referencing
         self.ref_card = Card(spacing=8)
-        self.ref_card.body.addWidget(label("Referencing", "h2"))
-        self.ref_note = label("", "muted")
+        self.ref_card.body.addWidget(heading(
+            "Referencing", "¹H on water at the sample temperature (7.83 − T/96.9 ppm); "
+            "other nuclei from the IUPAC frequency ratios. Assumes the ¹H carrier was set "
+            "on water."))
+        self.ref_note = label("", "mono")
         self.ref_note.setWordWrap(True)
         self.ref_card.body.addWidget(self.ref_note)
         self.ref_grid = QtWidgets.QGridLayout()
@@ -122,13 +120,6 @@ class ConvertPage(QtWidgets.QWidget):
         self.ref_card.body.addWidget(self.ref_btn, 0, Qt.AlignLeft)
         self.left.addWidget(self.ref_card)
 
-        # NUS
-        self.nus_card = Card(spacing=6)
-        self.nus_card.body.addWidget(label("Non-uniform sampling", "h2"))
-        self.nus_text = label("", "muted")
-        self.nus_text.setWordWrap(True)
-        self.nus_card.body.addWidget(self.nus_text)
-        self.left.addWidget(self.nus_card)
         self.left.addStretch(1)
 
         scroll = QtWidgets.QScrollArea()
@@ -348,9 +339,7 @@ class ConvertPage(QtWidgets.QWidget):
             self.banner.hide()
             return
         name = os.path.relpath(out, self.exp.folder)
-        self.banner_lbl.setText(f"Converted: {name}. Look at the FID to check there is signal "
-                                "and the first points look right." if just_converted
-                                else f"{name} already exists in this folder.")
+        self.banner_lbl.setText(f"Converted → {name}" if just_converted else f"{name} exists")
         self.banner.show()
 
     def _process(self):
@@ -389,21 +378,16 @@ class ConvertPage(QtWidgets.QWidget):
         chips.clear()
         items = [f"{e.ndim}D · {nuclei}", f"NS {e.ns}", f"{e.temperature:.1f} K",
                  f"{e.data_file} · {e.data_bytes / 1e6:.1f} MB"]
-        if e.nus:
-            items.append(f"NUS · {e.nus_points} points · {e.nus_fraction:.0%}")
         for text in items:
             chips.addWidget(label(text, "pill"))
-        self.exp_chips.updateGeometry()
-
-        self.nus_card.setVisible(e.nus)
         if e.nus:
             grid = " × ".join(str(d.nus_td // 2) for d in e.dims[1:])
-            self.nus_text.setText(
-                f"{e.nus_points} of {grid} indirect points were sampled ({e.nus_fraction:.0%}). "
-                "fid.com puts them on the full grid (zeros where nothing was measured) with "
-                "nusExpand.tcl and writes a sampling mask to mask/. The spectrum is then "
-                "reconstructed (SMILE, IST) when processing; a plain FT of the expanded data "
-                "shows sampling artefacts.")
+            pill = label(f"NUS · {e.nus_fraction:.0%}", "pill")
+            pill.setToolTip(f"{e.nus_points} of {grid} indirect points sampled. fid.com puts "
+                            "them on the full grid with nusExpand.tcl and writes a sampling "
+                            "mask; processing reconstructs the spectrum (SMILE).")
+            chips.addWidget(pill)
+        self.exp_chips.updateGeometry()
 
     def _reparse(self):
         self.fid_script = bruker.parse_fid_com(self.editor.toPlainText())
@@ -476,7 +460,7 @@ class ConvertPage(QtWidgets.QWidget):
             return
         found = bruker.checks(self.exp, self.fid_script)
         if not found:
-            ok = label("✓ fid.com matches the acquisition parameters.")
+            ok = label("✓ Matches acqus")
             ok.setStyleSheet(f"color: {theme.PIVOT_TEXT};")
             lay.addWidget(ok)
             return
@@ -484,6 +468,9 @@ class ConvertPage(QtWidgets.QWidget):
             text = label(chk.text)
             text.setWordWrap(True)
             row = hbox(Dot(theme.WARN), text, spacing=8)
+            row.setStretchFactor(text, 1)
+            if chk.detail:
+                row.addWidget(InfoTip(chk.detail))
             row.setAlignment(Qt.AlignTop)
             if chk.fix:
                 b = button(chk.fix_label, slot=lambda _=False, fx=chk.fix: self._edit(*fx))
@@ -497,9 +484,7 @@ class ConvertPage(QtWidgets.QWidget):
             return
         e = self.exp
         water = bruker.water_ppm(e.temperature)
-        self.ref_note.setText(f"Water at {e.temperature:.1f} K is {water:.3f} ppm "
-                              "(7.83 − T/96.9). Other nuclei follow from the IUPAC "
-                              "frequency ratios. This assumes the ¹H carrier was set on water.")
+        self.ref_note.setText(f"Water at {e.temperature:.1f} K: {water:.3f} ppm")
         refs = bruker.water_referenced(e)
         matched = bruker.match_dims(e, self.fid_script)
         for c, h in enumerate(("", "In fid.com", "Water-referenced"), start=0):

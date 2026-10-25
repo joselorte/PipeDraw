@@ -78,6 +78,27 @@ def _add(lay, it):
         lay.addWidget(it)
 
 
+class InfoTip(QtWidgets.QLabel):
+    """A small ⓘ that shows an explanation on hover, instead of text on screen."""
+
+    def __init__(self, text):
+        super().__init__("ⓘ")
+        self.setToolTip(text)
+        self.setCursor(Qt.WhatsThisCursor)
+        self.setStyleSheet(f"color: {theme.MUTED}; font-size: 13px;")
+
+
+def heading(text, tip=None, role="h2"):
+    """A heading with an optional ⓘ explanation."""
+    lbl = label(text, role)
+    if not tip:
+        return lbl
+    w = QtWidgets.QWidget()
+    w.setLayout(hbox(lbl, InfoTip(tip), None, spacing=6))
+    w.title = lbl
+    return w
+
+
 class Card(QtWidgets.QFrame):
     """White rounded panel. ``body`` is its main layout."""
 

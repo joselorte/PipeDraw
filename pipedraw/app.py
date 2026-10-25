@@ -14,8 +14,8 @@ from .convertpage import ConvertPage
 from .exportpage import ExportPage
 from .processpage import ProcessPage
 from .startpage import StartPage
-from .widgets import (Card, CardHeader, Chip, Dot, FlowLayout, Segmented, StepBadge, Stepper,
-                      button, clear_layout, hbox, icon, label, legend_item, restyle, two_line, vbox)
+from .widgets import (Card, CardHeader, Chip, Dot, FlowLayout, InfoTip, Segmented, StepBadge,
+                      Stepper, button, clear_layout, hbox, icon, label, legend_item, restyle, two_line, vbox)
 
 Qt = QtCore.Qt
 
@@ -382,12 +382,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self.legend_box = QtWidgets.QWidget()
         self.legend_box.setLayout(hbox(spacing=14))
         self.gain_lbl = label("×1", "mono")
-        gain = Stepper(self.gain_lbl, "Shorter traces", "Taller traces",
+        gain = Stepper(self.gain_lbl, "Shorter traces (or scroll down over them)",
+                       "Taller traces (or scroll up over them)",
                        lambda: self.scale_traces(0.5), lambda: self.scale_traces(2.0), width=48)
         fit = button("Fit", slot=lambda: self.scale_traces(None), tip="Fit the traces to the panel")
         card.body.addWidget(CardHeader(self.traces_title, self.legend_box, None,
-                                       label("Height", "field"), gain, fit,
-                                       label("or scroll over the traces", "muted")))
+                                       label("Height", "field"), gain, fit))
 
         tvb = TraceViewBox()
         tvb.setMouseEnabled(x=False, y=False)
@@ -445,10 +445,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self.chips_box = QtWidgets.QWidget()
         self.chips = FlowLayout(6)
         self.chips_box.setLayout(self.chips)
-        hint = label("Click strong, isolated peaks near both ends of the spectrum.", "muted")
-        hint.setWordWrap(True)
         clear = button("Clear all", kind="link", slot=self._clear_traces)
-        s1 = vbox(hbox(label("Pick traces", "h3"), None, clear), hint, self.chips_box, spacing=6)
+        s1 = vbox(hbox(label("Pick traces", "h3"),
+                       InfoTip("Click the spectrum through strong, isolated peaks, ideally near "
+                               "both ends."), None, clear, spacing=6),
+                  self.chips_box, spacing=6)
 
         # Step 2: pivot and P0
         self.pivot_chip = label("pivot –", "pivot")
@@ -456,7 +457,9 @@ class MainWindow(QtWidgets.QMainWindow):
                          tip="Put the pivot where the mouse is on the spectrum (V)")
         self.p0_slider = QtWidgets.QSlider(Qt.Horizontal, minimum=-1800, maximum=1800)
         self.p0_spin = self._angle_spin(-720, 720)
-        s2 = vbox(label("Pivot and zero order", "h3"),
+        s2 = vbox(hbox(label("Pivot and zero order", "h3"),
+                       InfoTip("Put the pivot on a large peak (drag the green line, or V), "
+                               "then fix that peak with P0."), None, spacing=6),
                   hbox(self.pivot_chip, piv_btn, None, spacing=8),
                   self._phase_row("P0", self.p0_slider, self.p0_spin), spacing=8)
 
@@ -472,7 +475,8 @@ class MainWindow(QtWidgets.QMainWindow):
         grp.addButton(self.coarse_btn)
         self.fine_btn.setChecked(True)
         reset = button("Reset", kind="link", slot=self.reset_phase, tip="Set P0 and P1 back to 0")
-        s3 = vbox(label("First order", "h3"), label("Fix peaks far from the pivot.", "muted"),
+        s3 = vbox(hbox(label("First order", "h3"),
+                       InfoTip("Fix peaks far from the pivot with P1."), None, spacing=6),
                   self._phase_row("P1", self.p1_slider, self.p1_spin),
                   hbox(label("Step", "muted"), self.fine_btn, self.coarse_btn, None, reset,
                        spacing=6), spacing=8)
@@ -537,7 +541,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.run_icon.setFixedSize(28, 28)
         self.run_icon.setAlignment(Qt.AlignCenter)
         self.run_title = label("No runs yet", "h3")
-        self.run_sub = label("Run the script from the top bar or with ⌘↩.", "muted")
+        self.run_sub = label("", "muted")
         self.run_sub.setWordWrap(True)
         log = button("Log", kind="link", slot=lambda: self.set_mode(SCRIPT))
         row = hbox(self.run_icon, vbox(self.run_title, self.run_sub, spacing=2), None, log,
@@ -649,7 +653,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.cursor_lbl.setText("")
         self._set_run_icon(None)
         self.run_title.setText("No runs yet")
-        self.run_sub.setText("Run the script from the top bar or with ⌘↩.")
+        self.run_sub.setText("")
         self.convert_page.reset()
         self.process_page.reset()
         self.export_page.load(None)
@@ -794,8 +798,7 @@ class MainWindow(QtWidgets.QMainWindow):
         sp.load(script_path)
         self._after_process = True
         self.process_page.set_running(
-            True, "Processing… the spectrum opens for phasing when it finishes. "
-                  "NUS reconstruction can take a few minutes.")
+            True, "Processing…" + (" (NUS: a few minutes)" if self.process_page.settings.nus else ""))
         sp.run()
 
     def _view_converted(self, path):
@@ -990,12 +993,11 @@ class MainWindow(QtWidgets.QMainWindow):
             self.active = 1 if freq[1] else 0
             self.dim_seg.set_index(0 if self.active == 1 else 1)
         if not any_freq:
-            note = ("This is time-domain data (an FID). Phasing needs a Fourier-transformed "
-                    "dimension: process the data, then open the spectrum to phase it.")
+            note = "FID: process it to phase"
         elif self.proj_kind:
-            note = "Phasing works on planes, not projections. Turn off Projection to phase."
+            note = "Projection: switch to a plane to phase"
         elif not (freq[0] and freq[1]):
-            note = "Only the Fourier-transformed dimension can be phased."
+            note = "Only transformed dimensions can be phased"
         else:
             note = ""
         self.phase_note.setText(note)
@@ -1296,8 +1298,8 @@ class MainWindow(QtWidgets.QMainWindow):
         pen = pg.mkPen(theme.TRACE_MARK, width=1.5, style=Qt.DashLine)
         for i, t in enumerate(s.traces):
             ln = pg.InfiniteLine(pos=other.coords[t], angle=0 if a == 1 else 90, movable=False,
-                                 pen=pen, label=f"trace {i + 1}",
-                                 labelOpts={"position": 0.96, "color": "#FFFFFF",
+                                 pen=pen, label=f" {i + 1} ",
+                                 labelOpts={"position": 0.96 - 0.06 * (i % 4), "color": "#FFFFFF",
                                             "fill": theme.TRACE_MARK, "movable": False})
             ln.setVisible(self.mode == PHASE)
             self.p2d.addItem(ln, ignoreBounds=True)
@@ -1524,7 +1526,7 @@ class MainWindow(QtWidgets.QMainWindow):
             proc.setProcessChannelMode(QtCore.QProcess.MergedChannels)
             proc.finished.connect(lambda code, _s: self._nmrpipe_autophase_done(proc, code))
             self.auto_btn.setEnabled(False)
-            self._auto_note("Running NMRPipe's autophase on the FID…")
+            self._auto_note("Auto-phasing…", "NMRPipe's basicAutoPhase.com on the FID")
             proc.start("/bin/csh", ["-c", cmd])
             return
         s = self.state[a]
@@ -1536,7 +1538,7 @@ class MainWindow(QtWidgets.QMainWindow):
             p0, p1, agree, n = autophase.from_peaks(vecs, ax, s.pivot,
                                                     fit_p1=self.auto_p1.isChecked())
         except ValueError as exc:
-            self._auto_note(f"Auto phase: {exc} Pick traces through clear peaks first.")
+            self._auto_note("No clear peaks: pick traces through peaks", str(exc))
             return
         s.p0, s.p1 = p0, p1
         if not s.traces:
@@ -1549,27 +1551,28 @@ class MainWindow(QtWidgets.QMainWindow):
                     break
         self._apply_phase_change()
         where = "your traces" if own else f"the {len(traces)} strongest traces"
-        self._auto_note(f"From {n} peaks in {where}; they agree {agree:.0%}. A starting "
-                        "point: check the traces, then fine-tune or Flip 180° if needed.")
+        self._auto_note(f"Auto: {n} peaks · {agree:.0%} agreement",
+                        f"Fit to the phase at the strongest peak maxima in {where}. "
+                        "A starting point: check the traces and fine-tune.")
 
     def _nmrpipe_autophase_done(self, proc, code):
         self._ap_proc = None
         self.auto_btn.setEnabled(True)
         out = bytes(proc.readAll()).decode(errors="replace")
         if code != 0 or not self.spec:
-            self._auto_note("NMRPipe's autophase failed:\n" + out[-300:])
+            self._auto_note("Auto phase failed", out[-500:])
             return
         try:
             total = autophase.parse_nmrpipe(out)
         except ValueError as exc:
-            self._auto_note(str(exc))
+            self._auto_note("Auto phase failed", str(exc))
             return
         s, ax = self.dim_state[2], self._axis(2)
         # Keep P1; set P0 so the script's total becomes NMRPipe's value.
         s.p0 = phase.wrap(total - s.script_p0 + s.p1 * s.pivot / ax.ftsize)
         self._apply_phase_change()
-        self._auto_note(f"NMRPipe's autophase: P0 {total:.1f}° (zero order, from the FID). "
-                        "Fine-tune if needed.")
+        self._auto_note(f"Auto (NMRPipe): P0 {total:.1f}°",
+                        "Zero order from basicAutoPhase.com on the FID. Fine-tune if needed.")
 
     def flip_phase(self):
         if self.spec:
@@ -1582,8 +1585,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self._update_traces()
         self._redraw_after_phase()
 
-    def _auto_note(self, text):
+    def _auto_note(self, text, detail=""):
         self.auto_lbl.setText(text)
+        self.auto_lbl.setToolTip(detail)
         self.auto_lbl.setVisible(bool(text))
 
     def reset_phase(self):
@@ -1623,7 +1627,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self.change_rows = {}
         for c, (h, align) in enumerate((("PS step", Qt.AlignLeft), ("In script", Qt.AlignRight),
                                         ("New", Qt.AlignRight))):
-            grid.addWidget(label(h, "field"), 0, c, align)
+            head = label(h, "field")
+            if h == "New":
+                head.setToolTip("Script values plus your correction, in NMRPipe's convention "
+                                "(P1 across the full width before EXT).")
+            grid.addWidget(head, 0, c, align)
         r = 1
         for i, ax in enumerate(self._source_axes()):
             if i:
@@ -1657,15 +1665,14 @@ class MainWindow(QtWidgets.QMainWindow):
         self.changes_title.setText(f"Changes to {name}" if has_script else "PS values")
         notes = []
         if not has_script:
-            notes.append("No processing script found. Enter the PS values the file was "
-                         "processed with; copy the new line into your script.")
+            notes.append("No script: enter the PS values in use")
         for ax in self._source_axes():
             d = ax.pipe_dim
             s = self.dim_state[d]
             ps = script.ps_for_dim(text, d) if has_script else None
             where = f"line {ps.line + 1}" if ps else ("new line" if has_script else f"F{d}")
             if has_script and not ps and ax.is_freq:
-                notes.append(f"No PS step for F{d}; one will be added after its FT.")
+                notes.append(f"F{d} has no PS step; one will be added")
             t0, t1 = self._total_dim(d)
             for which, old, new in (("p0", s.script_p0, t0), ("p1", s.script_p1, t1)):
                 lbl, spin, new_lbl = self.change_rows[(d, which)]
@@ -1681,10 +1688,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 if new_lbl.property("changed") != changed:
                     new_lbl.setProperty("changed", changed)
                     restyle(new_lbl)
-            if ax.is_freq and ax.size != ax.ftsize:
-                notes.append(f"{theme.nice_label(ax.label)} was cut with EXT; the values "
-                             "refer to the full width, as PS needs.")
-        self.changes_note.setText(" ".join(notes))
+        self.changes_note.setText(" · ".join(notes))
         self.changes_note.setVisible(bool(notes))
         pending = any(not s.is_identity for s in self.dim_state.values())
         self.write_run_btn.setEnabled(has_script and pending and not sp.running)

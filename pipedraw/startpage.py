@@ -121,11 +121,12 @@ class DropZone(QtWidgets.QFrame):
         ic.setFixedSize(48, 48)
         ic.setAlignment(Qt.AlignCenter)
         ic.setStyleSheet(f"background: {theme.ACCENT_SOFT}; border-radius: 12px;")
-        t = label("Drop a Bruker experiment folder, an FID or a spectrum here", "h3")
+        t = label("Drop an experiment folder or a file", "h3")
         t.setStyleSheet("font-size: 15px;")
+        t.setToolTip("A Bruker experiment (the folder with acqus), an NMRPipe FID or a spectrum")
         link = f"style='color:{theme.ACCENT}; font-weight:600'"
-        s = QtWidgets.QLabel(f"or <a href='folder' {link}>choose an experiment folder</a> · ⇧⌘O"
-                             f" &nbsp; or <a href='file' {link}>choose a file</a> · ⌘O")
+        s = QtWidgets.QLabel(f"<a href='folder' {link}>Choose folder…</a> ⇧⌘O"
+                             f" &nbsp;·&nbsp; <a href='file' {link}>Choose file…</a> ⌘O")
         s.linkActivated.connect(lambda which: (self.folder_clicked if which == "folder"
                                                else self.clicked).emit())
         lay = vbox(None, ic, t, s, None, spacing=10)
@@ -172,12 +173,7 @@ class StartPage(QtWidgets.QWidget):
         self.setLayout(outer)
 
         main = vbox(spacing=20)
-        title = label("Open data", "h1")
-        sub = label("Convert a Bruker experiment, or open an NMRPipe FID or spectrum. PipeDraw "
-                    "picks up the processing script next to them.")
-        sub.setWordWrap(True)
-        sub.setStyleSheet(f"font-size: 14px; color: {theme.TEXT2};")
-        main.addLayout(vbox(title, sub, spacing=6))
+        main.addWidget(label("Open data", "h1"))
         self.drop = DropZone()
         self.drop.dropped.connect(self._dropped)
         self.drop.clicked.connect(self.browse_requested)
@@ -203,25 +199,15 @@ class StartPage(QtWidgets.QWidget):
         self.recent_card.body.addLayout(self.recent_list)
         side.addWidget(self.recent_card)
 
-        term = Card(spacing=8)
-        term.body.addWidget(label("From the terminal", "h3"))
-        code = QtWidgets.QLabel("cd your/data\npipedraw test.ft2")
-        code.setFont(theme.mono_font(12))
-        code.setStyleSheet(f"background: {theme.CONSOLE}; color: #E6E8EC; border-radius: 8px; "
-                           "padding: 10px 12px;")
-        term.body.addWidget(code)
-        note = label("nmrPipe runs through csh, so it uses the setup in your .cshrc.", "muted")
-        note.setWordWrap(True)
-        term.body.addWidget(note)
-        side.addWidget(term)
-
-        status = Card(spacing=8)
-        status.body.addWidget(label("Status", "h3"))
-        self.pipe_dot = Dot(theme.MUTED)
-        self.pipe_lbl = label("Checking for nmrPipe…")
-        self.pipe_lbl.setWordWrap(True)
-        status.body.addLayout(hbox(self.pipe_dot, self.pipe_lbl, None))
-        side.addWidget(status)
+        # Only shown when something is wrong.
+        self.status_card = Card(spacing=8)
+        self.pipe_dot = Dot(theme.WARN)
+        self.pipe_lbl = label("nmrPipe not found")
+        self.pipe_lbl.setToolTip("PipeDraw runs NMRPipe through csh, which reads ~/.cshrc. "
+                                 "Set NMRPipe up there to convert and process.")
+        self.status_card.body.addLayout(hbox(self.pipe_dot, self.pipe_lbl, None))
+        self.status_card.hide()
+        side.addWidget(self.status_card)
         side.addStretch(1)
 
         cols = hbox(spacing=20)
@@ -273,8 +259,7 @@ class StartPage(QtWidgets.QWidget):
                         cell.setWordWrap(True)
                 grid.addWidget(cell, rows, c, Qt.AlignRight if c == 3 else Qt.AlignLeft)
         if rows == 0:
-            grid.addWidget(label("No NMRPipe files here. Drop one above or choose a file.",
-                                 "muted"), 1, 0, 1, 4)
+            grid.addWidget(label("No NMRPipe data here", "muted"), 1, 0, 1, 4)
         grid.setColumnStretch(1, 1)
 
         lay = self.recent_list
@@ -293,7 +278,7 @@ class StartPage(QtWidgets.QWidget):
             b.setToolTip(p)
             lay.addWidget(b)
         if not shown:
-            lay.addWidget(label("Spectra you open appear here.", "muted"))
+            lay.addWidget(label("None yet", "muted"))
 
     def _dropped(self, path):
         if os.path.isdir(path) and bruker.is_experiment(path):
@@ -309,11 +294,4 @@ class StartPage(QtWidgets.QWidget):
             r = subprocess.run(["csh", "-c", "which nmrPipe"], capture_output=True, text=True)
             if r.returncode == 0 and r.stdout.strip().startswith("/"):
                 found = r.stdout.strip()
-        if found:
-            self.pipe_dot.set_color(theme.OK)
-            self.pipe_lbl.setText("nmrPipe found")
-            self.pipe_lbl.setToolTip(found)
-        else:
-            self.pipe_dot.set_color(theme.WARN)
-            self.pipe_lbl.setText("nmrPipe not found from csh. Scripts can't run until "
-                                  "NMRPipe is set up in ~/.cshrc.")
+        self.status_card.setVisible(not found)

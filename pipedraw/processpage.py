@@ -8,7 +8,7 @@ import subprocess
 
 from . import autophase, procgen, theme, volume
 from .scriptpanel import CodeEditor
-from .widgets import Card, CardHeader, button, clear_layout, hbox, icon, label, vbox
+from .widgets import Card, CardHeader, InfoTip, button, clear_layout, hbox, icon, label, vbox
 
 Qt = QtCore.Qt
 
@@ -41,15 +41,11 @@ class ProcessPage(QtWidgets.QWidget):
         w = QtWidgets.QWidget()
         card = Card(margins=(28, 28, 28, 28), spacing=12)
         card.setMaximumWidth(560)
-        s = label("Convert an experiment first, or choose an NMRPipe FID (test.fid, or one "
-                  "plane of fid/test%03d.fid). PipeDraw writes nmrproc.com with NMRPipe's "
-                  "basicFT2.com / basicFT3.com and runs it.", "muted")
-        s.setWordWrap(True)
         b = button("Choose FID…", kind="primary", icon=icon("folder", "#FFFFFF"),
-                   slot=self.open_requested)
+                   slot=self.open_requested,
+                   tip="test.fid, or one plane of fid/test%03d.fid")
         b.setMinimumHeight(36)
         card.body.addWidget(label("Process an FID", "h2"))
-        card.body.addWidget(s)
         card.body.addWidget(b, 0, Qt.AlignLeft)
         w.setLayout(vbox(None, hbox(None, card, None), None, margins=(16, 16, 16, 16)))
         return w
@@ -66,9 +62,11 @@ class ProcessPage(QtWidgets.QWidget):
         self.input_card = Card(spacing=8)
         self.input_title = label("", "h2")
         self.input_sub = label("", "muted")
-        self.input_sub.setWordWrap(True)
+        self.input_pills = QtWidgets.QWidget()
+        self.input_pills.setLayout(hbox(spacing=6))
         self.input_card.body.addWidget(self.input_title)
         self.input_card.body.addWidget(self.input_sub)
+        self.input_card.body.addWidget(self.input_pills)
         self.left.addWidget(self.input_card)
 
         self.dims_box = vbox(spacing=12)
@@ -92,7 +90,11 @@ class ProcessPage(QtWidgets.QWidget):
         card = Card(margins=(0, 0, 0, 0), spacing=0)
         tab = QtWidgets.QFrame()
         tab.setObjectName("chip")
-        tab.setLayout(hbox(label("nmrproc.com", "h3"), spacing=8, margins=(10, 4, 10, 4)))
+        tab.setLayout(hbox(label("nmrproc.com", "h3"),
+                           InfoTip("Written by NMRPipe's basicFT2.com / basicFT3.com for these "
+                                   "settings. After processing, edit it in the Script tab; "
+                                   "phasing writes its PS values back into it."),
+                           spacing=8, margins=(10, 4, 10, 4)))
         self.state_lbl = label("", "muted")
         self.save_btn = button("Save", slot=self.save,
                                tip="Write nmrproc.com without running it")
@@ -112,12 +114,6 @@ class ProcessPage(QtWidgets.QWidget):
         self.preview = CodeEditor()
         self.preview.setReadOnly(True)
         card.body.addWidget(self.preview, 1)
-        hint = label("This preview is what NMRPipe's basicFT writes for these settings. "
-                     "After processing, the script is in the Script tab for hand edits; "
-                     "phasing writes its PS values back into it.", "muted")
-        hint.setWordWrap(True)
-        hint.setContentsMargins(14, 8, 14, 10)
-        card.body.addWidget(hint)
         root.addWidget(card, 1)
         return page
 
@@ -139,15 +135,20 @@ class ProcessPage(QtWidgets.QWidget):
         s = self.settings
         nuclei = " × ".join(theme.nice_label(a.label) for a in axes)
         self.input_title.setText(f"{s.ndim}D FID · {nuclei}")
-        lines = [f"{os.path.basename(self.folder)}/{s.fid}"]
+        self.input_sub.setText(f"{os.path.basename(self.folder)}/{s.fid}")
+        pills = self.input_pills.layout()
+        clear_layout(pills)
         if s.nus:
-            lines.append("Non-uniformly sampled (nuslist): reconstructed with SMILE. The "
-                         "indirect phases go into SMILE's settings.")
-        existing = os.path.join(self.folder, "nmrproc.com")
-        if os.path.isfile(existing):
-            lines.append("This folder already has nmrproc.com; its phases are used here. "
-                         "Saving keeps the old one as nmrproc.com.bak.")
-        self.input_sub.setText("\n".join(lines))
+            p = label("NUS · SMILE", "pill")
+            p.setToolTip("Sampled points listed in nuslist; the spectrum is reconstructed with "
+                         "SMILE. Indirect phases are SMILE settings too.")
+            pills.addWidget(p)
+        if os.path.isfile(os.path.join(self.folder, "nmrproc.com")):
+            p = label("Phases from nmrproc.com", "pill")
+            p.setToolTip("The folder's nmrproc.com sets the starting phases. Saving replaces "
+                          "it and keeps the old one as nmrproc.com.bak.")
+            pills.addWidget(p)
+        pills.addStretch(1)
         self.out_edit.setText(s.out)
         self._build_dim_cards()
         self.notice.hide()
@@ -224,15 +225,12 @@ class ProcessPage(QtWidgets.QWidget):
                 for k in ("sol", "base"):
                     w[k].toggled.connect(self._changed)
             elif not s.nus:
-                w["lp"] = QtWidgets.QCheckBox("Linear prediction (forward-backward, order 8)",
-                                              checked=ds.lp)
+                w["lp"] = QtWidgets.QCheckBox("Linear prediction", checked=ds.lp)
+                w["lp"].setToolTip("Forward-backward, order 8")
                 w["lp"].toggled.connect(self._changed)
                 grid.addWidget(w["lp"], row, 0, 1, 4)
             if ds.ft == "alt":
-                note = label("FT -alt: the data were acquired States-TPPI but converted as "
-                             "Complex.", "muted")
-                note.setWordWrap(True)
-                grid.addWidget(note, row + 2, 0, 1, 4)
+                w["ft"].setToolTip("-alt: acquired States-TPPI but converted as Complex")
             grid.setColumnStretch(4, 1)
             card.body.addLayout(grid)
             self.dims_box.addWidget(card)

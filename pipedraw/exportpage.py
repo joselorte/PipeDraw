@@ -4,7 +4,7 @@ import os
 from PySide6 import QtCore, QtWidgets
 
 from . import export, theme, volume
-from .widgets import Card, button, clear_layout, hbox, icon, label, vbox
+from .widgets import Card, button, clear_layout, hbox, heading, icon, label, vbox
 
 Qt = QtCore.Qt
 
@@ -34,10 +34,7 @@ class ExportPage(QtWidgets.QWidget):
         card = Card(margins=(28, 28, 28, 28), spacing=10)
         card.setMaximumWidth(520)
         card.body.addWidget(label("Export a spectrum", "h2"))
-        note = label("Open or process a spectrum first. Export writes it as Sparky and "
-                     "NMRView files and opens it in NMRFx, NMRViewJ or CCPN.", "muted")
-        note.setWordWrap(True)
-        card.body.addWidget(note)
+        card.body.addWidget(label("Open a processed spectrum first", "muted"))
         empty.setLayout(vbox(None, hbox(None, card, None), None, margins=(16, 16, 16, 16)))
         self.stack.addWidget(empty)
 
@@ -72,21 +69,16 @@ class ExportPage(QtWidgets.QWidget):
             name = QtWidgets.QLineEdit()
             name.setMinimumWidth(220)
             status = label("", "muted")
-            status.setWordWrap(True)
+            status.setMinimumWidth(110)
             go = button("Export", slot=lambda _=False, k=key: self.export(k))
-            d = label(desc, "muted")
-            d.setWordWrap(True)
-            grid.addWidget(label(title, "h3"), r, 0)
+            head = heading(title, desc, role="h3")
+            grid.addWidget(head, r, 0)
             grid.addWidget(name, r, 1)
             grid.addWidget(go, r, 2)
-            grid.addWidget(d, r + 1, 0, 1, 3)
-            grid.addWidget(status, r + 2, 0, 1, 3)
-            spacer = QtWidgets.QFrame()
-            spacer.setFixedHeight(8)
-            grid.addWidget(spacer, r + 3, 0)
+            grid.addWidget(status, r, 3)
             self.rows[key] = {"name": name, "status": status, "button": go, "ext": ext,
-                              "widgets": [grid.itemAtPosition(r, 0).widget(), name, go, d, status]}
-            r += 4
+                              "widgets": [head, name, go, status]}
+            r += 1
         grid.setColumnStretch(1, 1)
         files.body.addLayout(grid)
         self.all_btn = button("Export all", kind="primary", slot=self.export_all)
@@ -96,7 +88,9 @@ class ExportPage(QtWidgets.QWidget):
         apps = Card(spacing=10)
         apps.body.addWidget(label("Open in", "h2"))
         self.apps_box = vbox(spacing=10)
+        self.open_note = label("", "muted")
         apps.body.addLayout(self.apps_box)
+        apps.body.addWidget(self.open_note)
         col.addWidget(apps)
         col.addStretch(1)
 
@@ -130,7 +124,8 @@ class ExportPage(QtWidgets.QWidget):
         nuclei = " × ".join(theme.nice_label(a.label) for a in axes)
         self.spec_title.setText(f"{len(axes)}D spectrum · {nuclei}")
         self.spec_sub.setText(os.path.relpath(source.path, os.path.dirname(self.folder)))
-        self.folder_lbl.setText(f"Written to {self.folder}")
+        self.folder_lbl.setText(f"In {os.path.basename(self.folder)}/")
+        self.folder_lbl.setToolTip(self.folder)
         for key, row in self.rows.items():
             row["name"].setText(base + ("3d" if key == "single" else "") + row["ext"])
             row["status"].setText("")
@@ -149,8 +144,8 @@ class ExportPage(QtWidgets.QWidget):
         for key, row in self.rows.items():
             p = self.out_path(key)
             if os.path.exists(p) and not row["status"].property("fresh"):
-                row["status"].setText(f"{os.path.basename(p)} exists "
-                                      f"({os.path.getsize(p) / 1e6:.1f} MB). Export to replace it.")
+                row["status"].setText(f"Exists · {os.path.getsize(p) / 1e6:.1f} MB")
+                row["status"].setToolTip("Export again to replace it")
 
     # ---- exporting ----------------------------------------------------------
 
@@ -174,12 +169,14 @@ class ExportPage(QtWidgets.QWidget):
                 report = "Written with xyz2pipe | pipe2xyz; reads as one 3D file."
         except Exception as exc:  # show the tool's message
             QtWidgets.QApplication.restoreOverrideCursor()
-            row["status"].setText(f"Failed: {exc}")
+            row["status"].setText("Failed")
+            row["status"].setToolTip(str(exc))
             row["status"].setStyleSheet(f"color: {theme.ERROR};")
             return False
         QtWidgets.QApplication.restoreOverrideCursor()
         row["status"].setStyleSheet(f"color: {theme.PIVOT_TEXT};")
-        row["status"].setText(f"✓ {os.path.basename(out)} · {os.path.getsize(out) / 1e6:.1f} MB · {report}")
+        row["status"].setText(f"✓ {os.path.getsize(out) / 1e6:.1f} MB")
+        row["status"].setToolTip(report)
         row["status"].setProperty("fresh", True)
         self._fill_apps()
         return True
@@ -210,8 +207,7 @@ class ExportPage(QtWidgets.QWidget):
     def _fill_apps(self):
         clear_layout(self.apps_box)
         if not self.apps:
-            self.apps_box.addWidget(label("NMRFx, NMRViewJ and CCPN weren't found in "
-                                          "/Applications.", "muted"))
+            self.apps_box.addWidget(label("None found in /Applications", "muted"))
             return
         for name, (app, version) in self.apps.items():
             info = export.APPS[name]
@@ -224,18 +220,15 @@ class ExportPage(QtWidgets.QWidget):
             go.setEnabled(bool(files))
             wants = " or ".join(f if f != "pipe" else "NMRPipe" for f in info["formats"])
             if not files:
-                hint = f"Export a {wants} file first."
-            elif files and any(f.endswith(info["direct"]) for f in files if info["direct"]):
-                hint = "Opens the file directly."
+                go.setToolTip(f"Export a {wants} file first")
+            elif info["direct"]:
+                go.setToolTip(f"Opens {' or '.join(info['direct'])} files directly")
             else:
-                hint = ("Starts the program and shows the file in Finder (its path is copied): "
-                        "drag it onto the program's window, or use its Open command.")
-            text = label(hint, "muted")
-            text.setWordWrap(True)
+                go.setToolTip(f"{name} can't be handed a file: it starts, and the file is shown "
+                              "in Finder with its path copied, to drag in")
             title = label(f"{name}", "h3")
             ver = label(version, "muted")
-            self.apps_box.addLayout(hbox(vbox(hbox(title, ver, None, spacing=6), text, spacing=2),
-                                         combo, go, spacing=10))
+            self.apps_box.addLayout(hbox(title, ver, None, combo, go, spacing=10))
 
     def _open(self, name, file_path):
         if not file_path:
@@ -244,4 +237,5 @@ class ExportPage(QtWidgets.QWidget):
         direct = file_path.endswith(export.APPS[name]["direct"]) if export.APPS[name]["direct"] else False
         if not direct:
             QtWidgets.QApplication.clipboard().setText(file_path)
+            self.open_note.setText(f"Drag {os.path.basename(file_path)} from Finder into {name}")
         export.open_in(app, file_path, direct)
