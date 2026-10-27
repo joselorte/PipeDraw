@@ -262,3 +262,9 @@ uv pip install --python .venv/bin/python -r requirements.txt   # editable instal
 .venv/bin/python tools/make_test_3d.py demo3d   # synthetic 3D set (then: cd demo3d; csh nmrproc.com)
 .venv/bin/python -m pytest -q tests
 ```
+
+## Licence
+
+Copyright 2026 José L. Ortega-Roldán. Licensed under the
+[Apache License, Version 2.0](LICENSE). NMRPipe, nmrglue and the other tools
+PipeDraw uses have their own licences; NMRPipe is not included.
