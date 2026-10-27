@@ -95,13 +95,17 @@ def test_hsqc_generate_and_process(tmp_path):
     subprocess.run(["csh", "fid.com"], cwd=work, check=True, capture_output=True)
 
     s = procgen.defaults(str(work / "test.fid"), bruker.load_experiment(str(work)))
-    assert (s.dims["x"].p0, s.dims["y"].p0) == (22.0, 188.6)
+    # The phases come from the folder's own nmrproc.com, whatever they are now.
+    own = (work / "nmrproc.com").read_text()
+    expected = (script.ps_for_dim(own, 2).p0, script.ps_for_dim(own, 1).p0)
+    assert (s.dims["x"].p0, s.dims["y"].p0) == expected
     assert s.solvent and s.ext_x1 == "3%"        # basicFT's amide defaults (label HN)
     gen = tmp_path / "gen.com"
     subprocess.run(["csh", "-c", procgen.command(s, str(gen))], cwd=work, check=True,
                    capture_output=True)
     text = gen.read_text()
-    assert [(p.pipe_dim, p.p0) for p in script.parse_ps(text)] == [(2, 22.0), (1, 188.6)]
+    assert [(p.pipe_dim, p.p0) for p in script.parse_ps(text)] == [(2, expected[0]),
+                                                                   (1, expected[1])]
     (work / "nmrproc.com").write_text(text)
     subprocess.run(["csh", "nmrproc.com"], cwd=work, check=True, capture_output=True)
     spec = volume.load(str(work / "test.ft2"))
