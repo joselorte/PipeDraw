@@ -1,5 +1,6 @@
 """Start page shown when no spectrum is open."""
 import os
+import re
 import shutil
 import subprocess
 
@@ -40,7 +41,12 @@ def _exists(path):
     return volume.first_plane(path) is not None if "%" in path else os.path.exists(path)
 
 
-def _scan(folder, max_subfolders=12):
+def _natural(name):
+    """Sort key putting experiment 2 before 10."""
+    return [int(t) if t.isdigit() else t.lower() for t in re.split(r"(\d+)", name)]
+
+
+def _scan(folder, max_subfolders=500):
     """(shown name, path, (what, size)) for the NMRPipe data in ``folder`` and
     its subfolders. A plane series (test001.ft3, test002.ft3, …) is one entry."""
     entries = []
@@ -58,7 +64,7 @@ def _scan(folder, max_subfolders=12):
         if bruker.is_experiment(dirpath):
             experiment(dirpath, (prefix or os.path.basename(os.path.abspath(dirpath))) + "")
         try:
-            names = sorted(os.listdir(dirpath))
+            names = sorted(os.listdir(dirpath), key=_natural)
         except OSError:
             return
         files = [n for n in names if n.lower().endswith(SPECTRUM_EXTS)
@@ -86,7 +92,7 @@ def _scan(folder, max_subfolders=12):
 
     scan(folder, "")
     try:
-        subs = [d for d in sorted(os.listdir(folder))
+        subs = [d for d in sorted(os.listdir(folder), key=_natural)
                 if not d.startswith(".") and os.path.isdir(os.path.join(folder, d))]
     except OSError:
         subs = []
@@ -95,10 +101,10 @@ def _scan(folder, max_subfolders=12):
         # Bruker data often sits one level deeper (project/2D/4.hsqc).
         sub = os.path.join(folder, d)
         try:
-            inner = sorted(n for n in os.listdir(sub) if not n.startswith("."))
+            inner = sorted((n for n in os.listdir(sub) if not n.startswith(".")), key=_natural)
         except OSError:
             continue
-        for n in inner[:40]:
+        for n in inner[:max_subfolders]:
             path = os.path.join(sub, n)
             if os.path.isdir(path) and bruker.is_experiment(path):
                 experiment(path, f"{d}/{n}/")
@@ -170,7 +176,14 @@ class StartPage(QtWidgets.QWidget):
         outer.addStretch(1)
         outer.addWidget(page, 100)
         outer.addStretch(1)
-        self.setLayout(outer)
+        content = QtWidgets.QWidget()
+        content.setLayout(outer)
+        # Long folders scroll instead of running off the window.
+        scroll = QtWidgets.QScrollArea()
+        scroll.setWidget(content)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QtWidgets.QFrame.NoFrame)
+        self.setLayout(vbox(scroll))
 
         main = vbox(spacing=20)
         main.addWidget(label("Open data", "h1"))
@@ -241,7 +254,7 @@ class StartPage(QtWidgets.QWidget):
             entries.insert(0, (os.path.basename(script_path), None,
                                (f"Processing script · PS for {dims or 'none'}",
                                 f"{len(open(script_path).read().splitlines())} lines"), tag))
-        for entry in entries[:40]:
+        for entry in entries[:500]:
             shown, path, (what, size) = entry[:3]
             if path is None:
                 action = entry[3]
