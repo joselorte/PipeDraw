@@ -8,10 +8,11 @@ import numpy as np
 import pyqtgraph as pg
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from . import autophase, bruker, contours, phase, procgen, script, theme, volume
+from . import autophase, bruker, contours, phase, procgen, script, series, theme, volume
 from .scriptpanel import ScriptPanel
 from .convertpage import ConvertPage
 from .exportpage import ExportPage
+from .seriespage import SeriesPage
 from .processpage import ProcessPage
 from .startpage import StartPage
 from .widgets import (Card, CardHeader, Chip, Dot, FlowLayout, InfoTip, Segmented, StepBadge,
@@ -21,7 +22,7 @@ Qt = QtCore.Qt
 
 AXIS_WIDTH = 56
 AXIS_HEIGHT = 34
-CONVERT, PROCESS, VIEW, PHASE, EXPORT, SCRIPT = 0, 1, 2, 3, 4, 5
+CONVERT, PROCESS, VIEW, PHASE, EXPORT, SERIES, SCRIPT = 0, 1, 2, 3, 4, 5, 6
 CUBE_LIMIT = 64e6   # 3D data up to this many points are read whole (for planes in
                     # any orientation, projections and finding the strongest plane)
 
@@ -139,6 +140,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.start_page.open_requested.connect(self.open)
         self.start_page.browse_requested.connect(self.open_dialog)
         self.start_page.browse_folder_requested.connect(self.open_experiment_dialog)
+        self.start_page.series_requested.connect(self.open_series)
         self.pages.addWidget(self.start_page)
         self.pages.addWidget(self._build_workspace())
         self.pages.addWidget(self.script_panel)
@@ -154,6 +156,15 @@ class MainWindow(QtWidgets.QMainWindow):
         self.pages.addWidget(self.process_page)
         self.export_page = ExportPage()
         self.pages.addWidget(self.export_page)
+        self.series_page = SeriesPage()
+        self.series_page.open_template.connect(self.open_experiment)
+        self.series_page.view_point.connect(self._view_series_point)
+        self.series_page.overlay_requested.connect(self.show_overlay)
+        self.pages.addWidget(self.series_page)
+        self.series_items = []           # [(spectrum path, label, colour)] in series order
+        self.series_index = 0
+        self.overlay_curves = []
+        self._overlay_cache = {}
         self._after_process = False
         self._build_footer(root)
         self._build_menus()
@@ -195,10 +206,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self.crumb_file = label("No spectrum open", "h3")
         self.dims_pill = label("", "pill")
         self.dims_pill.hide()
-        self.mode_seg = Segmented(["Convert", "Process", "View", "Phase", "Export", "Script"])
+        self.mode_seg = Segmented(["Convert", "Process", "View", "Phase", "Export", "Series",
+                                   "Script"])
         self.mode_seg.set_index(PHASE)
         self.mode_seg.changed.connect(self.set_mode)
-        for b, tip in zip(self.mode_seg.buttons, ("⌘1", "⌘2", "⌘3", "⌘4", "⌘5", "⌘6")):
+        for b, tip in zip(self.mode_seg.buttons, ("⌘1", "⌘2", "⌘3", "⌘4", "⌘5", "⌘6", "⌘7")):
             b.setToolTip(tip)
 
         self.reload_btn = QtWidgets.QPushButton()
@@ -290,6 +302,7 @@ class MainWindow(QtWidgets.QMainWindow):
                           self.neg_check, legend, None, self.zoom_btn, fit)
         card.body.addWidget(head)
         card.body.addWidget(self._build_plane_bar())
+        card.body.addWidget(self._build_series_bar())
 
         glw = pg.GraphicsLayoutWidget()
         glw.setBackground(theme.CARD)
@@ -345,6 +358,30 @@ class MainWindow(QtWidgets.QMainWindow):
         p.vb.sigRangeChanged.connect(self._sync_trace_xrange)
         card.body.addWidget(glw, 1)
         return card
+
+    def _build_series_bar(self):
+        bar = QtWidgets.QFrame()
+        bar.setObjectName("cardHeader")
+        self.series_lbl = label("", "mono")
+        self.series_lbl.setMinimumWidth(110)
+        self.series_lbl.setAlignment(Qt.AlignCenter)
+        prev = button("◀", slot=lambda: self.series_step(-1), tip="Previous point ([ or ↓)")
+        nxt = button("▶", slot=lambda: self.series_step(1), tip="Next point (] or ↑)")
+        for b in (prev, nxt):
+            b.setFixedWidth(34)
+        self.overlay_chk = QtWidgets.QCheckBox("Overlay")
+        self.overlay_chk.setToolTip("All points together, coloured from first (blue) to last "
+                                    "(orange), at the same contour levels")
+        self.overlay_chk.toggled.connect(lambda _: self.draw_contours())
+        self.series_legend = QtWidgets.QWidget()
+        self.series_legend.setLayout(hbox(spacing=10))
+        close = button("×", kind="chipX", slot=self.clear_series, tip="Leave the series")
+        bar.setLayout(hbox(label("Series", "field"), prev, self.series_lbl, nxt, 8,
+                           self.overlay_chk, self.series_legend, None, close,
+                           spacing=8, margins=(14, 6, 14, 6)))
+        bar.hide()
+        self.series_bar = bar
+        return bar
 
     def _build_plane_bar(self):
         bar = QtWidgets.QFrame()
@@ -577,7 +614,7 @@ class MainWindow(QtWidgets.QMainWindow):
         m.addSeparator()
         m.addAction("Quit", QtGui.QKeySequence.Quit, self.close)
         m = self.menuBar().addMenu("&View")
-        for i, name in enumerate(("Convert", "Process", "View", "Phase", "Export", "Script")):
+        for i, name in enumerate(("Convert", "Process", "View", "Phase", "Export", "Series", "Script")):
             m.addAction(name, QtGui.QKeySequence(f"Ctrl+{i + 1}"),
                         lambda i=i: self.set_mode(i))
         m.addSeparator()
@@ -598,6 +635,13 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.pages.setCurrentIndex(0)
             else:
                 self.pages.setCurrentIndex(3)
+        elif mode == SERIES:
+            if self.series_page.folder is None:
+                exp = self.convert_page.exp
+                self.series_page.load_folder(os.path.dirname(exp.folder) if exp
+                                             else self.start_page.folder,
+                                             template=exp.folder if exp else None)
+            self.pages.setCurrentIndex(6)
         elif mode == EXPORT:
             self.export_page.load(self.source)
             self.pages.setCurrentIndex(5)
@@ -618,6 +662,83 @@ class MainWindow(QtWidgets.QMainWindow):
             item.setVisible(phasing)
         if self.spec:
             self._redraw_after_phase()
+
+    # ---- series --------------------------------------------------------------
+
+    def open_series(self, folder):
+        self.series_page.load_folder(folder)
+        self.set_mode(SERIES)
+
+    def _view_series_point(self, path):
+        pts = self.series_page.processed()
+        colours = series.gradient(len(pts))
+        self.series_items = [(p.spectrum, p.value or p.name, c) for p, c in zip(pts, colours)]
+        self.overlay_chk.blockSignals(True)
+        self.overlay_chk.setChecked(False)
+        self.overlay_chk.blockSignals(False)
+        self.open(path)
+        self._update_series_bar()
+        self.set_mode(PHASE)
+
+    def show_overlay(self, items):
+        """Show a processed series: step through it, overlay on."""
+        self.series_items = list(items)
+        self._overlay_cache = {}
+        current = (os.path.normpath(os.path.abspath(self.source.path))
+                   if self.source is not None else None)
+        paths = [os.path.normpath(os.path.abspath(p)) for p, _, _ in items]
+        self.series_index = paths.index(current) if current in paths else 0
+        if current not in paths:
+            self.open(items[0][0])
+        self.overlay_chk.blockSignals(True)
+        self.overlay_chk.setChecked(not self.is_3d)
+        self.overlay_chk.blockSignals(False)
+        self._update_series_bar()
+        self.set_mode(VIEW)
+        self.draw_contours()
+        if self.is_3d:
+            self.flash("Overlay is for 2D series; step through the points with [ and ].")
+
+    def series_step(self, step):
+        if not self.series_items:
+            return
+        i = self.series_index + step
+        if 0 <= i < len(self.series_items):
+            self.series_index = i
+            self.open(self.series_items[i][0], keep_view=True)
+            self._update_series_bar()
+
+    def clear_series(self, redraw=True):
+        self.series_items = []
+        self._overlay_cache = {}
+        for c in self.overlay_curves:
+            self.p2d.removeItem(c)
+        self.overlay_curves = []
+        self.series_bar.hide()
+        if redraw and self.spec is not None:
+            self.draw_contours()
+
+    def _overlay_active(self):
+        return bool(self.series_items) and self.overlay_chk.isChecked() and not self.is_3d
+
+    def _overlay_spec(self, path):
+        if path not in self._overlay_cache:
+            self._overlay_cache[path] = volume.load(path)
+        return self._overlay_cache[path]
+
+    def _update_series_bar(self):
+        if not self.series_items:
+            self.series_bar.hide()
+            return
+        n = len(self.series_items)
+        _, name, _ = self.series_items[self.series_index]
+        self.series_lbl.setText(f"{self.series_index + 1}/{n} · {name}")
+        legend = self.series_legend.layout()
+        clear_layout(legend)
+        shown = self.series_items if n <= 8 else [self.series_items[0], self.series_items[-1]]
+        for _, name, colour in shown:
+            legend.addWidget(legend_item(name, colour))
+        self.series_bar.setVisible(True)
 
     def close_dataset(self):
         """Forget the open experiment, FID and spectrum, and go back to Convert."""
@@ -649,6 +770,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.p2d.removeItem(ln)
         self.trace_curves, self.trace_lines = [], []
         self.plane_bar.hide()
+        self.clear_series(redraw=False)
         self.mode_seg.buttons[PHASE].setEnabled(True)
         self.cursor_lbl.setText("")
         self._set_run_icon(None)
@@ -821,6 +943,12 @@ class MainWindow(QtWidgets.QMainWindow):
         old = self.source
         same = (keep_view and old is not None and type(src) is type(old)
                 and _shape(src) == _shape(old))
+        norm = os.path.normpath(os.path.abspath(src.path))
+        paths = [os.path.normpath(os.path.abspath(p)) for p, _, _ in self.series_items]
+        if self.series_items and norm not in paths:
+            self.clear_series(redraw=False)      # a file outside the series
+        elif norm in paths:
+            self.series_index = paths.index(norm)
         self.source = src
         if not same:
             self.spec = None     # the old view's axes no longer apply; rebuilt below
@@ -1146,6 +1274,21 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         spec = self.spec
         lv = contours.levels(self.base_level, self.factor_spin.value(), self.nlev_spin.value())
+        for c in self.overlay_curves:
+            self.p2d.removeItem(c)
+        self.overlay_curves = []
+        if self._overlay_active():
+            # Every point in its gradient colour; the current one drawn thicker.
+            self.pos_curve.setData([], [])
+            self.neg_curve.setData([], [])
+            for i, (path, _, colour) in enumerate(self.series_items):
+                s = self._overlay_spec(path)
+                x, y = contours.contour_paths(s.real, lv, s.x.coords, s.y.coords)
+                c = pg.PlotCurveItem(x, y, connect="finite",
+                                     pen=pg.mkPen(colour, width=2.0 if i == self.series_index else 1.0))
+                self.p2d.addItem(c)
+                self.overlay_curves.append(c)
+            return
         x, y = contours.contour_paths(self.display, lv, spec.x.coords, spec.y.coords)
         self.pos_curve.setData(x, y)
         if self.neg_check.isChecked():
@@ -1210,7 +1353,10 @@ class MainWindow(QtWidgets.QMainWindow):
     def keyPressEvent(self, ev):
         key = ev.text()
         k = ev.key()
-        if self.is_3d and k in (Qt.Key_Up, Qt.Key_PageUp, Qt.Key_Down, Qt.Key_PageDown):
+        if self.series_items and (key in ("[", "]") or (not self.is_3d and k in (
+                Qt.Key_Up, Qt.Key_PageUp, Qt.Key_Down, Qt.Key_PageDown))):
+            self.series_step(1 if key == "]" or k in (Qt.Key_Up, Qt.Key_PageUp) else -1)
+        elif self.is_3d and k in (Qt.Key_Up, Qt.Key_PageUp, Qt.Key_Down, Qt.Key_PageDown):
             self.set_plane(self.plane_index + (1 if k in (Qt.Key_Up, Qt.Key_PageUp) else -1))
         elif self.is_3d and key.lower() == "p":
             self.proj_btn.toggle()

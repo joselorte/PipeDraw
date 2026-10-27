@@ -156,6 +156,36 @@ file directly. NMRFx and CCPN don't accept files from macOS, so PipeDraw starts
 them, shows the file in Finder and copies its path: drag the file onto the
 program's window.
 
+## Series (titrations and other sets of similar experiments)
+
+The **Series** tab processes many experiments with one recipe:
+
+1. **Pick the series.** **Process as a series…** on the start page (shown when a
+   folder holds several experiments), or **Choose folder…** in the tab. Tick the
+   points to include and type the titrant amount for each; it names the exported
+   files (`12_0.5eq.ucsf`).
+2. **Set up a template.** Choose one experiment and convert, process and phase it as
+   usual (**Set up template** opens it). Its `fid.com` and `nmrproc.com` are the recipe.
+3. **Check.** Each point's acquisition is compared with the template's: pulse program,
+   points, sweep widths, frequencies, temperature and NUS schedule. Differences show
+   as ⚠ in the table.
+4. **Run series.** For each point, PipeDraw gets a fresh `fid.com` from NMRPipe's
+   `bruker -AUTO` and replays the template's edits (modes, carriers, labels). It
+   copies the template's `nmrproc.com`, then converts and processes, several points at
+   once. Existing scripts are kept as `.bak`. **Water-reference each point** sets
+   carriers from each point's own temperature instead of copying the template's. A
+   `series.com` loop is written next to the experiments to rerun the lot with NMRPipe
+   alone.
+5. **Check phases** compares each point's phase with the template's, using NMRPipe's
+   autophaser for ¹H and the peak-maximum fit for indirect dimensions, and flags
+   differences above 8°.
+6. **Overlay** shows all processed points on one spectrum, coloured from blue (first)
+   to orange (last); step through the points with ◀ ▶, `[` `]` or ↑/↓. Double-click a
+   point in the table to open it for phasing.
+7. **Export all** writes Sparky and NMRView files for every point.
+
+`tools/make_test_series.py` makes a test series from one Bruker experiment.
+
 ## 3D data and FIDs
 
 **3D data** opens the way nmrDraw shows it: one plane at a time. Open a plane series

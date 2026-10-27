@@ -166,6 +166,7 @@ class StartPage(QtWidgets.QWidget):
     open_requested = QtCore.Signal(str)
     browse_requested = QtCore.Signal()
     browse_folder_requested = QtCore.Signal()
+    series_requested = QtCore.Signal(str)     # folder holding a series of experiments
 
     def __init__(self):
         super().__init__()
@@ -196,7 +197,12 @@ class StartPage(QtWidgets.QWidget):
         self.files_card = Card(margins=(0, 0, 0, 6), spacing=0)
         self.folder_lbl = label("", "mono")
         self.folder_lbl.setStyleSheet(f"color: {theme.MUTED};")
-        self.files_card.body.addWidget(CardHeader(label("In this folder", "h3"), self.folder_lbl, None))
+        self.series_btn = button("Process as a series…", slot=self._series,
+                                 tip="Process these experiments (e.g. a titration) with one "
+                                     "experiment's recipe")
+        self.series_btn.hide()
+        self.files_card.body.addWidget(CardHeader(label("In this folder", "h3"), self.folder_lbl,
+                                                  None, self.series_btn))
         self.files_grid = QtWidgets.QGridLayout()
         self.files_grid.setContentsMargins(16, 6, 16, 6)
         self.files_grid.setHorizontalSpacing(24)
@@ -241,6 +247,14 @@ class StartPage(QtWidgets.QWidget):
             grid.addWidget(label(h, "field"), 0, c)
         script_path = script.find_script(folder)
         entries = _scan(folder)
+        # Offer a series where one folder holds several experiments.
+        parents = {}
+        for _, path, _ in entries:
+            if os.path.isdir(path):
+                parents.setdefault(os.path.dirname(os.path.abspath(path)), []).append(path)
+        best = max(parents.items(), key=lambda kv: len(kv[1]), default=(None, []))
+        self._series_folder = best[0] if len(best[1]) >= 2 else None
+        self.series_btn.setVisible(self._series_folder is not None)
         # The first processed spectrum gets the main Open button.
         primary = next((e[1] for e in entries if "spectrum" in e[2][0]), None)
         rows = 0
@@ -292,6 +306,10 @@ class StartPage(QtWidgets.QWidget):
             lay.addWidget(b)
         if not shown:
             lay.addWidget(label("None yet", "muted"))
+
+    def _series(self):
+        if self._series_folder:
+            self.series_requested.emit(self._series_folder)
 
     def _dropped(self, path):
         if os.path.isdir(path) and bruker.is_experiment(path):
