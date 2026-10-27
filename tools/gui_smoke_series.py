@@ -63,7 +63,7 @@ pump()
 print("series tab:", win.mode == SERIES, "| points:", [p.name for p in sp.points],
       "| template:", os.path.basename(sp.template), sp.template_state.text())
 for r, v in enumerate(["0 eq", "0.25 eq", "0.5 eq", "1 eq", "2 eq", "4 eq"]):
-    sp.table.item(r, 2).setText(v)
+    sp.table.item(r, 3).setText(v)
 sp.jobs.setValue(3)
 sp.run()
 secs = wait_idle(sp)

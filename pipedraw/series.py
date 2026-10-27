@@ -23,6 +23,9 @@ REPLAY = ("MODE", "CAR", "LAB")
 class Point:
     folder: str
     value: str = ""                 # titrant amount, free text (e.g. "0.5 eq")
+    include: bool = True
+    pulprog: str = ""
+    same: bool = True               # same type as the template
     issues: list = field(default_factory=list)
     status: str = "idle"            # idle, running, done, failed
     spectrum: Optional[str] = None
@@ -71,6 +74,35 @@ def compare(template: bruker.Experiment, other: bruker.Experiment) -> list:
     elif template.nus and template.nus_points != other.nus_points:
         issues.append(f"{other.nus_points} NUS points (template {template.nus_points})")
     return issues
+
+
+def same_kind(template: bruker.Experiment, other: bruker.Experiment) -> bool:
+    """Same experiment type: pulse program, dimensions and nuclei. Points of a
+    series are this; other experiments in the folder usually aren't."""
+    return (other.pulprog == template.pulprog and other.ndim == template.ndim
+            and [d.nucleus for d in other.dims] == [d.nucleus for d in template.dims])
+
+
+def parse_selection(text: str, names: list) -> set:
+    """Experiment names picked by text such as ``10-21, 25`` (ranges inclusive,
+    by number). Names that aren't numbers can be listed as they are."""
+    picked = set()
+    numbers = {}
+    for n in names:
+        if n.isdigit():
+            numbers[int(n)] = n
+    for token in re.split(r"[,\s]+", text.strip()):
+        if not token:
+            continue
+        m = re.fullmatch(r"(\d+)\s*[-–:]\s*(\d+)", token)
+        if m:
+            lo, hi = sorted((int(m.group(1)), int(m.group(2))))
+            picked.update(n for k, n in numbers.items() if lo <= k <= hi)
+        elif token in names:
+            picked.add(token)
+        else:
+            raise ValueError(f"No experiment {token!r}")
+    return picked
 
 
 def bruker_label(nucleus: str) -> str:

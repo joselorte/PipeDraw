@@ -161,9 +161,12 @@ program's window.
 The **Series** tab processes many experiments with one recipe:
 
 1. **Pick the series.** **Process as a series…** on the start page (shown when a
-   folder holds several experiments), or **Choose folder…** in the tab. Tick the
-   points to include and type the titrant amount for each; it names the exported
-   files (`12_0.5eq.ucsf`).
+   folder holds several experiments), or **Choose folder…** in the tab. Every
+   experiment in the folder is listed with its pulse program. Only those of the
+   template's type (same pulse program, dimensions and nuclei) start ticked.
+   **Select** has *Same as template*, *All*, *None* and a range box (`10-21, 25`).
+   **Hide other types** hides the rest. Type the titrant amount for each point; it
+   names the exported files (`12_0.5eq.ucsf`).
 2. **Set up a template.** Choose one experiment and convert, process and phase it as
    usual (**Set up template** opens it). Its `fid.com` and `nmrproc.com` are the recipe.
 3. **Check.** Each point's acquisition is compared with the template's: pulse program,

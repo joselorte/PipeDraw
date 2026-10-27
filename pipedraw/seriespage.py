@@ -11,7 +11,8 @@ from .widgets import Card, CardHeader, InfoTip, button, hbox, heading, icon, lab
 
 Qt = QtCore.Qt
 
-COLS = ("", "Experiment", "Titrant", "Check", "Status", "Phase vs template")
+COLS = ("", "Experiment", "Type", "Titrant", "Check", "Status", "Phase vs template")
+C_INC, C_NAME, C_TYPE, C_VALUE, C_CHECK, C_STATUS, C_DEV = range(len(COLS))
 # Phase differences from the template above this are flagged. The checks
 # scatter by a few degrees between identical-phase points (NMRPipe's
 # autophaser works in 1° steps over a region the peaks move through).
@@ -29,6 +30,7 @@ class SeriesPage(QtWidgets.QWidget):
         super().__init__(parent)
         self.folder = None
         self.points = []
+        self._custom_selection = False   # the user picked points by hand
         self.template_check = None
         self.pool = None
         self.futures = {}
@@ -94,7 +96,7 @@ class SeriesPage(QtWidgets.QWidget):
                                    | QtWidgets.QAbstractItemView.SelectedClicked)
         hh = self.table.horizontalHeader()
         hh.setSectionResizeMode(QtWidgets.QHeaderView.ResizeToContents)
-        hh.setSectionResizeMode(3, QtWidgets.QHeaderView.Stretch)
+        hh.setSectionResizeMode(C_CHECK, QtWidgets.QHeaderView.Stretch)
         self.table.setStyleSheet(f"QTableWidget {{ border: 0; background: {theme.CARD}; }}"
                                  f"QHeaderView::section {{ background: {theme.CARD}; border: 0;"
                                  f" border-bottom: 1px solid {theme.DIVIDER}; padding: 6px;"
@@ -107,6 +109,25 @@ class SeriesPage(QtWidgets.QWidget):
                                                      "titrant amount (it names exported "
                                                      "files). Double-click a processed "
                                                      "point to open it.")))
+        self.range_edit = QtWidgets.QLineEdit()
+        self.range_edit.setPlaceholderText("e.g. 10-21, 25")
+        self.range_edit.setFixedWidth(160)
+        self.range_edit.setToolTip("Experiments to tick, by number; Enter applies")
+        self.range_edit.returnPressed.connect(self.select_range)
+        self.hide_others = QtWidgets.QCheckBox("Hide other types")
+        self.hide_others.setToolTip("Hide experiments with a different pulse program, "
+                                    "dimensions or nuclei from the template")
+        self.hide_others.toggled.connect(lambda _: self._apply_hidden())
+        bar = QtWidgets.QFrame()
+        bar.setObjectName("cardHeader")
+        bar.setLayout(hbox(label("Select", "field"),
+                           button("Same as template", slot=self.select_same,
+                                  tip="Tick experiments of the template's type"),
+                           button("All", slot=lambda: self._select(lambda p: True)),
+                           button("None", slot=lambda: self._select(lambda p: False)),
+                           12, self.range_edit, button("Tick", slot=self.select_range),
+                           None, self.hide_others, spacing=8, margins=(14, 6, 14, 6)))
+        table_card.body.addWidget(bar)
         table_card.body.addWidget(self.table, 1)
         root.addWidget(table_card, 1)
 
@@ -135,7 +156,13 @@ class SeriesPage(QtWidgets.QWidget):
                         if bruker.is_experiment(os.path.join(self.folder, n))),
                        key=series.natural_key)
         self.points = [series.Point(os.path.join(self.folder, n)) for n in names]
+        self._custom_selection = False
+        self.table.setRowCount(0)
         for p in self.points:
+            try:
+                p.pulprog = bruker.load_experiment(p.folder).pulprog
+            except Exception:  # unreadable parameters: still listed
+                p.pulprog = "?"
             # Points processed earlier (in another session, or by series.com).
             proc = os.path.join(p.folder, "nmrproc.com")
             if os.path.isfile(proc):
@@ -174,8 +201,12 @@ class SeriesPage(QtWidgets.QWidget):
             return
         texp = bruker.load_experiment(t)
         for p in self.points:
-            p.issues = [] if p.folder == t else series.compare(texp, bruker.load_experiment(p.folder))
+            other = bruker.load_experiment(p.folder)
+            p.same = p.folder == t or series.same_kind(texp, other)
+            p.issues = [] if p.folder == t else series.compare(texp, other)
             p.phase_dev = {}
+            if not self._custom_selection:
+                p.include = p.same
         ready = self._template_ready()
         self.template_state.setText("✓ Ready" if ready else "Not set up yet")
         self.template_state.setStyleSheet(
@@ -206,22 +237,61 @@ class SeriesPage(QtWidgets.QWidget):
         self.table.blockSignals(True)
         self.table.setRowCount(len(self.points))
         for r, p in enumerate(self.points):
-            if self.table.item(r, 0) is None:
+            if self.table.item(r, C_INC) is None:
                 inc = QtWidgets.QTableWidgetItem()
                 inc.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled)
-                inc.setCheckState(Qt.Checked)
-                self.table.setItem(r, 0, inc)
+                self.table.setItem(r, C_INC, inc)
+            self.table.item(r, C_INC).setCheckState(Qt.Checked if p.include else Qt.Unchecked)
             name = QtWidgets.QTableWidgetItem(p.name + ("  · template" if p.folder == self.template else ""))
             name.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
             name.setFont(theme.mono_font(12))
-            self.table.setItem(r, 1, name)
+            self.table.setItem(r, C_NAME, name)
+            kind = QtWidgets.QTableWidgetItem(p.pulprog)
+            kind.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+            if not p.same:
+                kind.setForeground(QtGui.QColor(theme.MUTED))
+            self.table.setItem(r, C_TYPE, kind)
             val = QtWidgets.QTableWidgetItem(p.value)
             val.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable | Qt.ItemIsEditable)
-            self.table.setItem(r, 2, val)
+            self.table.setItem(r, C_VALUE, val)
             self._set_row(r)
         self.table.blockSignals(False)
+        self._apply_hidden()
+        self._update_summary()
+
+    def _update_summary(self):
         n = len(self.points)
-        self.summary.setText(f"{n} experiment{'s' if n != 1 else ''}")
+        k = sum(p.include for p in self.points)
+        self.summary.setText(f"{k} of {n} selected")
+
+    def _apply_hidden(self):
+        hide = self.hide_others.isChecked()
+        for r, p in enumerate(self.points):
+            self.table.setRowHidden(r, hide and not p.same)
+
+    def _select(self, keep):
+        for p in self.points:
+            p.include = bool(keep(p))
+        self._custom_selection = True
+        self._fill_table()
+
+    def select_same(self):
+        self._select(lambda p: p.same)
+        self._custom_selection = False
+
+    def select_range(self):
+        text = self.range_edit.text()
+        if not text.strip():
+            return
+        try:
+            picked = series.parse_selection(text, [p.name for p in self.points])
+        except ValueError as exc:
+            self.range_edit.setToolTip(str(exc))
+            self.range_edit.setStyleSheet(f"border-color: {theme.ERROR};")
+            return
+        self.range_edit.setStyleSheet("")
+        self.range_edit.setToolTip("Experiments to tick, by number; Enter applies")
+        self._select(lambda p: p.name in picked)
 
     def _set_row(self, r):
         p = self.points[r]
@@ -242,7 +312,7 @@ class SeriesPage(QtWidgets.QWidget):
         if any(abs(v) > PHASE_WARN for v in p.phase_dev.values()):
             dev.setForeground(QtGui.QColor(theme.WARN))
             dev.setToolTip(f"More than {PHASE_WARN:.0f}° from the template: check this point's phase.")
-        for c, item in ((3, check), (4, status), (5, dev)):
+        for c, item in ((C_CHECK, check), (C_STATUS, status), (C_DEV, dev)):
             item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
             self.table.setItem(r, c, item)
         self.table.blockSignals(blocked)
@@ -254,17 +324,21 @@ class SeriesPage(QtWidgets.QWidget):
         return "  ".join(f"{names.get(d, d)} {v:+.1f}°" for d, v in sorted(p.phase_dev.items()))
 
     def _item_changed(self, item):
-        if item.column() == 2:
-            self.points[item.row()].value = item.text().strip()
+        p = self.points[item.row()]
+        if item.column() == C_VALUE:
+            p.value = item.text().strip()
+        elif item.column() == C_INC:
+            p.include = item.checkState() == Qt.Checked
+            self._custom_selection = True
+            self._update_summary()
 
     def _double_clicked(self, r, c):
         p = self.points[r]
-        if c != 2 and p.spectrum:
+        if c not in (C_VALUE, C_INC) and p.spectrum:
             self.view_point.emit(p.spectrum)
 
     def included(self):
-        return [p for r, p in enumerate(self.points)
-                if self.table.item(r, 0) and self.table.item(r, 0).checkState() == Qt.Checked]
+        return [p for p in self.points if p.include]
 
     # ---- running ------------------------------------------------------------------
 

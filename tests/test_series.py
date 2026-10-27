@@ -79,3 +79,18 @@ def test_series_end_to_end(tmp_path):
         assert all(abs(v) < 8 for v in dev.values()), dev
         files = series.export_point(p)
         assert [os.path.basename(x) for x in files] == [f"{p.name}.ucsf", f"{p.name}.nv"]
+
+
+def test_same_kind(tmp_path):
+    t = _exp(tmp_path, "1")
+    assert series.same_kind(t, _exp(tmp_path, "2", ACQUS.replace("##$TE= 298.0", "##$TE= 303.0")))
+    assert not series.same_kind(t, _exp(tmp_path, "3", ACQUS.replace("<hsqc>", "<trosy>")))
+    assert not series.same_kind(t, _exp(tmp_path, "4", acqu2s=ACQU2S.replace("<15N>", "<13C>")))
+
+
+def test_parse_selection():
+    names = ["1", "2", "3", "10", "11", "12", "25", "ref"]
+    assert series.parse_selection("2-11, 25 ref", names) == {"2", "3", "10", "11", "25", "ref"}
+    assert series.parse_selection("12–10", names) == {"10", "11", "12"}
+    with pytest.raises(ValueError):
+        series.parse_selection("99", names)
