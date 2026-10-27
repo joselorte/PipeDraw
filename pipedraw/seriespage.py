@@ -17,6 +17,7 @@ C_INC, C_NAME, C_TYPE, C_VALUE, C_CHECK, C_STATUS, C_DEV = range(len(COLS))
 # scatter by a few degrees between identical-phase points (NMRPipe's
 # autophaser works in 1° steps over a region the peaks move through).
 PHASE_WARN = 8.0
+_BOX_STYLE = "QCheckBox::indicator { width: 18px; height: 18px; }"
 STATUS_TEXT = {"idle": "", "queued": "Queued", "running": "Running…", "done": "✓ Processed",
                "failed": "Failed", "exported": "✓ Exported"}
 
@@ -31,6 +32,8 @@ class SeriesPage(QtWidgets.QWidget):
         self.folder = None
         self.points = []
         self._custom_selection = False   # the user picked points by hand
+        self._last_ticked = None         # row of the last checkbox clicked (for shift-click)
+        self.boxes = []
         self.template_check = None
         self.pool = None
         self.futures = {}
@@ -103,6 +106,9 @@ class SeriesPage(QtWidgets.QWidget):
                                  f" font-weight: 600; color: {theme.TEXT2}; }}")
         self.table.itemChanged.connect(self._item_changed)
         self.table.cellDoubleClicked.connect(self._double_clicked)
+        self.table.installEventFilter(self)
+        hh.setSectionResizeMode(C_INC, QtWidgets.QHeaderView.Fixed)
+        self.table.setColumnWidth(C_INC, 40)
         self.summary = label("", "muted")
         table_card.body.addWidget(CardHeader(label("Experiments", "h3"), self.summary, None,
                                              InfoTip("Tick the points to process. Type the "
@@ -117,16 +123,20 @@ class SeriesPage(QtWidgets.QWidget):
         self.hide_others = QtWidgets.QCheckBox("Hide other types")
         self.hide_others.setToolTip("Hide experiments with a different pulse program, "
                                     "dimensions or nuclei from the template")
-        self.hide_others.toggled.connect(lambda _: self._apply_hidden())
+        self.hide_others.toggled.connect(self._hide_toggled)
         bar = QtWidgets.QFrame()
         bar.setObjectName("cardHeader")
-        bar.setLayout(hbox(label("Select", "field"),
+        # Above the checkbox column: tick or untick every shown experiment.
+        self.all_box = QtWidgets.QCheckBox()
+        self.all_box.setTristate(True)
+        self.all_box.setToolTip("Tick or untick all (shown) experiments")
+        self.all_box.setStyleSheet(_BOX_STYLE)
+        self.all_box.clicked.connect(self._all_clicked)
+        bar.setLayout(hbox(self.all_box, 8, label("Select", "field"),
                            button("Same as template", slot=self.select_same,
                                   tip="Tick experiments of the template's type"),
-                           button("All", slot=lambda: self._select(lambda p: True)),
-                           button("None", slot=lambda: self._select(lambda p: False)),
                            12, self.range_edit, button("Tick", slot=self.select_range),
-                           None, self.hide_others, spacing=8, margins=(14, 6, 14, 6)))
+                           None, self.hide_others, spacing=8, margins=(12, 6, 14, 6)))
         table_card.body.addWidget(bar)
         table_card.body.addWidget(self.table, 1)
         root.addWidget(table_card, 1)
@@ -158,6 +168,7 @@ class SeriesPage(QtWidgets.QWidget):
         self.points = [series.Point(os.path.join(self.folder, n)) for n in names]
         self._custom_selection = False
         self.table.setRowCount(0)
+        self.boxes = []
         for p in self.points:
             try:
                 p.pulprog = bruker.load_experiment(p.folder).pulprog
@@ -236,12 +247,23 @@ class SeriesPage(QtWidgets.QWidget):
     def _fill_table(self):
         self.table.blockSignals(True)
         self.table.setRowCount(len(self.points))
+        if len(self.boxes) != len(self.points):
+            # Checkboxes are made once per folder; refreshes only update them.
+            self.boxes = []
+            for r in range(len(self.points)):
+                box = QtWidgets.QCheckBox()
+                box.setStyleSheet(_BOX_STYLE)
+                box.setToolTip("Shift-click to tick or untick a run of experiments")
+                box.clicked.connect(lambda checked, r=r: self._box_clicked(r, checked))
+                under = QtWidgets.QTableWidgetItem()
+                under.setFlags(Qt.NoItemFlags)       # nothing to select or draw under the box
+                self.table.setItem(r, C_INC, under)
+                cell = QtWidgets.QWidget()
+                cell.setLayout(hbox(None, box, None))
+                self.table.setCellWidget(r, C_INC, cell)
+                self.boxes.append(box)
         for r, p in enumerate(self.points):
-            if self.table.item(r, C_INC) is None:
-                inc = QtWidgets.QTableWidgetItem()
-                inc.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled)
-                self.table.setItem(r, C_INC, inc)
-            self.table.item(r, C_INC).setCheckState(Qt.Checked if p.include else Qt.Unchecked)
+            self.boxes[r].setChecked(p.include)
             name = QtWidgets.QTableWidgetItem(p.name + ("  · template" if p.folder == self.template else ""))
             name.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
             name.setFont(theme.mono_font(12))
@@ -263,11 +285,59 @@ class SeriesPage(QtWidgets.QWidget):
         n = len(self.points)
         k = sum(p.include for p in self.points)
         self.summary.setText(f"{k} of {n} selected")
+        shown = [p for r, p in enumerate(self.points) if not self.table.isRowHidden(r)]
+        ticked = sum(p.include for p in shown)
+        self.all_box.setCheckState(Qt.Unchecked if ticked == 0 else
+                                   Qt.Checked if ticked == len(shown) else Qt.PartiallyChecked)
+
+    def _set_include(self, rows, value):
+        for r in rows:
+            self.points[r].include = value
+            self.boxes[r].setChecked(value)
+        self._custom_selection = True
+        self._update_summary()
+
+    def _box_clicked(self, r, checked):
+        """A checkbox click; with Shift, the run from the last click gets the same state."""
+        shift = QtWidgets.QApplication.keyboardModifiers() & Qt.ShiftModifier
+        if shift and self._last_ticked is not None and self._last_ticked != r:
+            lo, hi = sorted((self._last_ticked, r))
+            rows = [i for i in range(lo, hi + 1) if not self.table.isRowHidden(i)]
+        else:
+            rows = [r]
+        self._last_ticked = r
+        self._set_include(rows, checked)
+
+    def _all_clicked(self, *_):
+        shown = [r for r in range(len(self.points)) if not self.table.isRowHidden(r)]
+        # From "all ticked" untick; from none or some, tick them all.
+        value = not all(self.points[r].include for r in shown)
+        self._set_include(shown, value)
+
+    def eventFilter(self, obj, ev):
+        # Space toggles the selected rows.
+        if obj is self.table and ev.type() == QtCore.QEvent.KeyPress and ev.key() == Qt.Key_Space:
+            rows = sorted({i.row() for i in self.table.selectedIndexes()})
+            if rows:
+                self._set_include(rows, not self.points[rows[0]].include)
+                return True
+        return super().eventFilter(obj, ev)
+
+    def _hide_toggled(self, hide):
+        if hide:
+            # Nothing hidden may stay ticked: it would be processed unseen.
+            for r, p in enumerate(self.points):
+                if not p.same and p.include:
+                    p.include = False
+                    if r < len(self.boxes):
+                        self.boxes[r].setChecked(False)
+        self._apply_hidden()
 
     def _apply_hidden(self):
         hide = self.hide_others.isChecked()
         for r, p in enumerate(self.points):
             self.table.setRowHidden(r, hide and not p.same)
+        self._update_summary()
 
     def _select(self, keep):
         for p in self.points:
@@ -324,13 +394,8 @@ class SeriesPage(QtWidgets.QWidget):
         return "  ".join(f"{names.get(d, d)} {v:+.1f}°" for d, v in sorted(p.phase_dev.items()))
 
     def _item_changed(self, item):
-        p = self.points[item.row()]
         if item.column() == C_VALUE:
-            p.value = item.text().strip()
-        elif item.column() == C_INC:
-            p.include = item.checkState() == Qt.Checked
-            self._custom_selection = True
-            self._update_summary()
+            self.points[item.row()].value = item.text().strip()
 
     def _double_clicked(self, r, c):
         p = self.points[r]
