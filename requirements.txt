@@ -1,7 +1,2 @@
-nmrglue>=0.12
-numpy
-scipy
-PySide6>=6.6
-pyqtgraph>=0.13
-contourpy>=1.2
-pytest
+# Development install: the package (editable) plus test tools.
+-e .[test]

@@ -1731,9 +1731,23 @@ class MainWindow(QtWidgets.QMainWindow):
         dlg.resize(520, 640)
         dlg.show()
 
+USAGE = """usage: pipedraw [path]
+
+Opens PipeDraw. path can be a Bruker experiment folder, an NMRPipe FID or
+spectrum (test.fid, test.ft2), or one plane of a 3D series (ft/test001.ft3).
+With no path it opens on the Convert tab, showing the current folder."""
+
+
 def main(argv=None):
     import sys
     argv = sys.argv if argv is None else argv
+    if len(argv) > 1 and argv[1] in ("-h", "--help"):
+        print(USAGE)
+        return 0
+    if len(argv) > 1 and argv[1] in ("-V", "--version"):
+        from . import __version__
+        print(f"pipedraw {__version__}")
+        return 0
     pg.setConfigOptions(background=theme.CARD, foreground=theme.MUTED, antialias=True)
     app = QtWidgets.QApplication(argv)
     app.setApplicationName("PipeDraw")

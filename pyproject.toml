@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pipedraw"
+dynamic = ["version"]
+description = "Viewer, phasing and processing front end for NMRPipe: convert Bruker data, process, phase 2D/3D spectra, export"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "José L. Ortega-Roldán" }]
+keywords = ["NMR", "NMRPipe", "spectroscopy", "phasing", "Bruker"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Chemistry",
+    "Operating System :: MacOS",
+    "Operating System :: POSIX :: Linux",
+]
+dependencies = [
+    "nmrglue>=0.10",
+    "numpy>=1.24",
+    "scipy>=1.10",
+    "PySide6>=6.6",
+    "pyqtgraph>=0.13",
+    "contourpy>=1.2",
+]
+
+[project.optional-dependencies]
+test = ["pytest", "pyflakes"]
+
+[project.scripts]
+pipedraw = "pipedraw.app:main"
+
+[project.urls]
+Source = "https://github.com/joselorte/PipeDraw"
+
+[tool.setuptools]
+packages = ["pipedraw"]
+
+[tool.setuptools.dynamic]
+version = { attr = "pipedraw.__version__" }

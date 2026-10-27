@@ -1,16 +1,62 @@
-# PipeDraw (prototype)
+# PipeDraw
 
-A native macOS viewer for 2D NMRPipe spectra with interactive phasing, as a
-stand-in for nmrDraw. It reads `.ft2` (and other 2D NMRPipe files), draws
-contours in ppm, and turns interactive phase adjustments into `-fn PS` lines
-for your processing script.
+A desktop front end for NMRPipe, in place of nmrDraw: convert Bruker data
+(`fid.com`), process it (`nmrproc.com`), view and phase 2D and 3D spectra
+interactively or automatically, and export for Sparky, NMRView/NMRFx and CCPN.
+PipeDraw writes and edits ordinary NMRPipe scripts, so everything it does can be
+rerun or shared without it.
 
-## Setup
+## Install
+
+**You need** NMRPipe, installed and set up for `csh` (its installer adds the setup to
+`~/.cshrc`; see the [NMRPipe site](https://www.ibbr.umd.edu/nmrpipe/)), and
+Python 3.10 or newer. PipeDraw is installed with
+[pipx](https://pipx.pypa.io), which keeps it in its own environment and puts a
+`pipedraw` command on your path.
+
+### macOS
 
 ```bash
-uv venv --python 3.12 .venv
-uv pip install --python .venv/bin/python -r requirements.txt
+brew install pipx
+pipx ensurepath
+pipx install git+https://github.com/joselorte/PipeDraw
 ```
+
+Open a new terminal, then run `pipedraw`.
+
+### Linux
+
+```bash
+sudo apt install pipx tcsh libxcb-cursor0
+pipx ensurepath
+pipx install git+https://github.com/joselorte/PipeDraw
+```
+
+(Ubuntu/Debian package names; `libxcb-cursor0` is needed by Qt's window system support.)
+
+### Windows (WSL2)
+
+NMRPipe doesn't run on Windows itself, so PipeDraw runs in WSL2, the Linux
+system built into Windows 10 and 11:
+
+1. In PowerShell (as administrator): `wsl --install`, then restart and set up Ubuntu.
+2. In Ubuntu, install NMRPipe's Linux version as its instructions describe.
+3. Install PipeDraw as for Linux above.
+
+On Windows 11, `pipedraw` opens as a normal window. Windows 10 needs an X server
+such as VcXsrv. Keep data inside the Linux home folder rather than under
+`/mnt/c/`; it is much faster there. **Open in** (NMRFx, NMRViewJ, CCPN) is
+macOS-only; elsewhere, open the exported files from those programs.
+
+### Updating
+
+```bash
+pipx upgrade pipedraw
+```
+
+While the GitHub repository is private, installing needs access to it: ask to be
+added as a collaborator, then let git use your GitHub sign-in (once, with the
+[GitHub CLI](https://cli.github.com)): `gh auth login`, then `gh auth setup-git`.
 
 ## Run
 
@@ -25,7 +71,7 @@ Run `pipedraw` with no file and it opens on the **Convert** tab, showing the fol
 
 **Close** in the top bar (or File > Close dataset, ⌘W) forgets the open experiment, FID, spectrum and script and returns to Convert, listing the closed experiment's neighbours so you can start on the next one.
 
-The top bar has three modes (⌘1–3):
+The top bar has six tabs (⌘1–6): Convert, Process, View, Phase, Export and Script. Among them:
 
 - **View**: the spectrum on its own, with contour controls and row/column slices.
 - **Phase**: adds the phasing traces and the phasing panel.
@@ -184,7 +230,7 @@ reprocessed, matches the correctly processed one exactly.
 `+` / `-` raise or lower the lowest contour, `F` full view, `V` pivot at cursor,
 `Cmd-R` reload, `Cmd-I` header, `Cmd-Return` run script, `Cmd-S` save script. Drag a box to zoom; right-click for pyqtgraph's view menu.
 
-## Limitations of this prototype
+## Limitations
 
 - 4D data isn't supported.
 - Conversion covers Bruker data; Varian/Agilent and JEOL come later.
@@ -198,6 +244,16 @@ reprocessed, matches the correctly processed one exactly.
   transform (as nmrDraw does). That is exact in the middle of the spectrum, but can
   leave faint artifacts near the edges, especially after `EXT`. For an exact
   preview, leave out `-di` in the dimension you are phasing.
+
+## Development
+
+```bash
+git clone https://github.com/joselorte/PipeDraw
+cd PipeDraw
+uv venv --python 3.12 .venv
+uv pip install --python .venv/bin/python -r requirements.txt   # editable install + test tools
+.venv/bin/pipedraw
+```
 
 ## Tests
 
