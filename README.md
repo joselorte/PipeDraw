@@ -67,7 +67,12 @@ cd /path/to/nmrdata
 pipedraw test.ft2
 ```
 
-Run `pipedraw` with no file and it opens on the **Convert** tab, showing the folder you started in. It lists Bruker experiments (with **Convert** buttons), NMRPipe FIDs and spectra, including those one level down, plus recent items, and checks that nmrPipe can be found. You can drop an experiment folder or a file on it.
+Run `pipedraw` with no file and it opens on the **Convert** tab, showing the folder you started in as a tree. It also lists recent items, checks that nmrPipe can be found, and accepts a dropped experiment folder or file.
+
+- **Experiments:** each Bruker experiment shows its pulse program, dimensions and nuclei, and whether it is processed, converted or not converted yet. Each has a **Convert** button, plus **Open** for the processed spectrum.
+- **Contents:** expanding an experiment shows its scripts, FIDs and spectra (also in `fid/` and `ft/`), and the exported `.ucsf`/`.nv` files.
+- **Folders:** folders that hold NMR data, up to three levels down, expand to their experiments. A folder with several experiments has a **Series…** button.
+- **Navigating:** the filter box narrows the list by name, pulse program or nucleus; ↑ goes to the parent folder; **Choose folder…** (or dropping a folder) opens another one.
 
 **Close** in the top bar (or File > Close dataset, ⌘W) forgets the open experiment, FID, spectrum and script and returns to Convert, listing the closed experiment's neighbours so you can start on the next one.
 
@@ -180,14 +185,16 @@ The **Series** tab processes many experiments with one recipe:
    once. Existing scripts are kept as `.bak`. **Water-reference each point** sets
    carriers from each point's own temperature instead of copying the template's. A
    `series.com` loop is written next to the experiments to rerun the lot with NMRPipe
-   alone.
+   alone. Each point is exported as soon as it is processed, in the formats ticked
+   under **Then export** (Sparky and NMRView by default), next to its spectrum.
 5. **Check phases** compares each point's phase with the template's, using NMRPipe's
    autophaser for ¹H and the peak-maximum fit for indirect dimensions, and flags
    differences above 8°.
 6. **Overlay** shows all processed points on one spectrum, coloured from blue (first)
    to orange (last); step through the points with ◀ ▶, `[` `]` or ↑/↓. Double-click a
    point in the table to open it for phasing.
-7. **Export all** writes Sparky and NMRView files for every point.
+7. **Export again** rewrites the ticked formats for every ticked, processed point, for
+   example after typing titrant amounts.
 
 `tools/make_test_series.py` makes a test series from one Bruker experiment.
 

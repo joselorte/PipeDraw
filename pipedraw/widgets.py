@@ -350,6 +350,13 @@ def icon(name, color=theme.TEXT, size=16):
         path.lineTo(20, 20)
         path.lineTo(20, 15)
         p.drawPath(path)
+    elif name == "up":
+        path.moveTo(12, 19)
+        path.lineTo(12, 5)
+        path.moveTo(6, 11)
+        path.lineTo(12, 5)
+        path.lineTo(18, 11)
+        p.drawPath(path)
     elif name == "info":
         p.drawEllipse(QtCore.QPointF(12, 12), 9, 9)
         path.moveTo(12, 8)

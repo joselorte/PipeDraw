@@ -24,12 +24,32 @@ def make_project(root, count):
 
 def test_all_experiments_listed_in_natural_order(tmp_path):
     make_project(tmp_path, 60)
-    shown = [e[0] for e in startpage._scan(str(tmp_path))]
-    assert shown == [f"{i}/" for i in range(1, 61)]
+    nodes = startpage.list_folder(str(tmp_path))
+    assert [n.name for n in nodes] == [str(i) for i in range(1, 61)]
+    assert {n.kind for n in nodes} == {"experiment"}
+    assert nodes[0].size == "2D · ¹H × ¹⁵N" and nodes[0].status == "raw"
 
 
-def test_experiments_one_level_down(tmp_path):
+def test_folders_expand_to_experiments(tmp_path):
     (tmp_path / "2D").mkdir()
+    (tmp_path / "empty").mkdir()
     make_project(tmp_path / "2D", 25)
-    shown = [e[0] for e in startpage._scan(str(tmp_path))]
-    assert shown[:3] == ["2D/1/", "2D/2/", "2D/3/"] and len(shown) == 25
+    nodes = startpage.list_folder(str(tmp_path))
+    assert [(n.kind, n.name, n.experiments) for n in nodes] == [("folder", "2D/", 25)]
+    assert len(startpage.list_folder(nodes[0].path)) == 25
+
+
+def test_processed_experiment_and_its_contents(tmp_path):
+    make_project(tmp_path, 1)
+    exp = tmp_path / "1"
+    (exp / "fid.com").write_text("bruk2pipe -in ./ser | nmrPipe -out ./test.fid -ov\n")
+    (exp / "nmrproc.com").write_text("nmrPipe -in test.fid | nmrPipe -out test.ft2 -ov\n")
+    (exp / "test.fid").write_bytes(b"")
+    node = startpage.experiment_node(str(exp))
+    assert node.status == "converted" and node.open_path is None
+    (exp / "test.ft2").write_bytes(b"")
+    (exp / "1_0.5eq.ucsf").write_bytes(b"\0" * 10)
+    node = startpage.experiment_node(str(exp))
+    assert node.status == "processed" and node.open_path == str(exp / "test.ft2")
+    kinds = [(n.kind, n.name) for n in startpage.experiment_contents(str(exp))]
+    assert ("script", "nmrproc.com") in kinds and ("export", "1_0.5eq.ucsf") in kinds

@@ -19,7 +19,11 @@ C_INC, C_NAME, C_TYPE, C_VALUE, C_CHECK, C_STATUS, C_DEV = range(len(COLS))
 PHASE_WARN = 8.0
 _BOX_STYLE = "QCheckBox::indicator { width: 18px; height: 18px; }"
 STATUS_TEXT = {"idle": "", "queued": "Queued", "running": "Running…", "done": "✓ Processed",
-               "failed": "Failed", "exported": "✓ Exported"}
+               "failed": "Failed", "exported": "✓ Exported",
+               "export_failed": "Processed · export failed"}
+# Statuses of a point with a processed spectrum.
+PROCESSED = ("done", "exported", "export_failed")
+EXPORT_KINDS = (("ucsf", "Sparky"), ("nv", "NMRView"))
 
 
 class SeriesPage(QtWidgets.QWidget):
@@ -80,11 +84,24 @@ class SeriesPage(QtWidgets.QWidget):
                                 tip="Compare each point's phase with the template's")
         self.overlay_btn = button("Overlay", slot=self.overlay,
                                   tip="Show the processed points together in View")
-        self.export_btn = button("Export all", slot=self.export_all,
-                                 tip="Sparky and NMRView files for every processed point, "
-                                     "named by experiment and titrant")
-        top.body.addLayout(hbox(self.run_btn, self.stop_btn, None, self.check_btn,
-                                self.overlay_btn, self.export_btn, spacing=8))
+        self.export_btn = button("Export again", slot=self.export_all,
+                                 tip="Write the ticked formats again for every ticked, "
+                                     "processed point (e.g. after typing titrant amounts)")
+        # Each point is exported as soon as it is processed, in the ticked formats.
+        settings = QtCore.QSettings()
+        self.export_boxes = {}
+        for key, name in EXPORT_KINDS:
+            box = QtWidgets.QCheckBox(name)
+            box.setChecked(settings.value(f"series/export_{key}", True, type=bool))
+            box.toggled.connect(lambda on, k=key: QtCore.QSettings().setValue(f"series/export_{k}", on))
+            self.export_boxes[key] = box
+        export_tip = InfoTip("Run series exports each point when it is processed, named by "
+                             "experiment and titrant (e.g. 12_0.5eq.ucsf), next to its "
+                             "spectrum.")
+        top.body.addLayout(hbox(self.run_btn, self.stop_btn, 12, label("Then export", "field"),
+                                self.export_boxes["ucsf"], self.export_boxes["nv"], export_tip,
+                                None, self.check_btn, self.overlay_btn, self.export_btn,
+                                spacing=8))
         root.addWidget(top)
 
         table_card = Card(margins=(0, 0, 0, 0), spacing=0)
@@ -376,7 +393,7 @@ class SeriesPage(QtWidgets.QWidget):
             check.setForeground(QtGui.QColor(theme.PIVOT_TEXT))
         status = QtWidgets.QTableWidgetItem(STATUS_TEXT.get(p.status, p.status))
         status.setToolTip(p.log[-1500:] if p.log else "")
-        if p.status == "failed":
+        if p.status in ("failed", "export_failed"):
             status.setForeground(QtGui.QColor(theme.ERROR))
         dev = QtWidgets.QTableWidgetItem(self._dev_text(p))
         if any(abs(v) > PHASE_WARN for v in p.phase_dev.values()):
@@ -436,20 +453,28 @@ class SeriesPage(QtWidgets.QWidget):
         water = self.water.isChecked()
         for p in points:
             p.status, p.log, p.phase_dev = "queued", "", {}
-        self._start(points, lambda p: self._process_point(p, t, edits, proc, water))
+        kinds = self.export_kinds()
+        self._start(points, lambda p: self._process_point(p, t, edits, proc, water, kinds))
 
-    def _process_point(self, p, template, edits, proc, water):
+    def export_kinds(self):
+        return tuple(k for k, box in self.export_boxes.items() if box.isChecked())
+
+    def _process_point(self, p, template, edits, proc, water, kinds=()):
         if p.folder != template:
             series.write_point(p, series.fid_com_for(p.folder, edits, water), proc)
         code, out = self._run(series.run_command(), p.folder)
         p.log = out
         p.spectrum = series.output_path(p.folder, proc)
-        return "done" if code == 0 and _exists(p.spectrum) else "failed"
+        if not (code == 0 and _exists(p.spectrum)):
+            return "failed"
+        if not kinds or self.stop_event.is_set():
+            return "done"
+        return self._export_point(p, kinds)
 
     def check_phases(self):
         if self.busy:
             return
-        done = [p for p in self.points if p.spectrum and p.status in ("done", "exported")]
+        done = [p for p in self.points if p.spectrum and p.status in PROCESSED]
         tp = next((p for p in self.points if p.folder == self.template), None)
         if tp is None or not done:
             return
@@ -469,15 +494,25 @@ class SeriesPage(QtWidgets.QWidget):
     def export_all(self):
         if self.busy:
             return
-        done = [p for p in self.points if p.spectrum and p.status in ("done", "exported")]
+        kinds = self.export_kinds()
+        done = [p for p in self.processed() if p.include]
+        if not kinds or not done:
+            self._log("Nothing to export: tick a format and processed experiments.")
+            return
         for p in done:
             p.status = "queued"
-        self._log("Exporting Sparky and NMRView files…")
-        self._start(done, self._export_point)
+        self._log("Exporting " + " and ".join(n for k, n in EXPORT_KINDS if k in kinds)
+                  + " files…")
+        self._start(done, lambda p: self._export_point(p, kinds))
 
-    def _export_point(self, p):
-        files = series.export_point(p)
-        p.log = "\n".join(files)
+    def _export_point(self, p, kinds):
+        """Export one processed point; a failed export leaves it processed."""
+        try:
+            files = series.export_point(p, kinds)
+        except Exception as exc:  # NMRPipe's message, kept in the tooltip
+            p.log = (p.log + "\n" if p.log else "") + f"Export failed: {exc}"
+            return "export_failed"
+        p.log = (p.log + "\n" if p.log else "") + "Exported:\n" + "\n".join(files)
         return "exported"
 
     def _start(self, points, job):
@@ -536,9 +571,13 @@ class SeriesPage(QtWidgets.QWidget):
             self.poll.stop()
             self.pool.shutdown(wait=False)
             self._busy_ui(False)
-            ok = sum(p.status in ("done", "exported") for p in self.points)
+            ok = sum(p.status in PROCESSED for p in self.points)
             failed = sum(p.status == "failed" for p in self.points)
-            self._log(f"Finished: {ok} processed" + (f", {failed} failed" if failed else ""))
+            exported = sum(p.status == "exported" for p in self.points)
+            bad = sum(p.status == "export_failed" for p in self.points)
+            self._log(f"Finished: {ok} processed" + (f", {exported} exported" if exported else "")
+                      + (f", {failed} failed" if failed else "")
+                      + (f", {bad} not exported (see their status)" if bad else ""))
 
     def _refresh(self):
         for r in range(len(self.points)):
@@ -558,7 +597,7 @@ class SeriesPage(QtWidgets.QWidget):
     # ---- overlay ----------------------------------------------------------------------
 
     def processed(self):
-        return [p for p in self.points if p.spectrum and p.status in ("done", "exported")]
+        return [p for p in self.points if p.spectrum and p.status in PROCESSED]
 
     def overlay(self):
         pts = self.processed()
