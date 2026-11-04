@@ -77,8 +77,10 @@ def test_series_end_to_end(tmp_path):
         assert bruker.parse_fid_com(open(os.path.join(f, "fid.com")).read()).dims["y"]["CAR"] == "118.026"
         dev = series.relative(series.phase_check(p), tcheck)
         assert all(abs(v) < 8 for v in dev.values()), dev
-        files = series.export_point(p)
-        assert [os.path.basename(x) for x in files] == [f"{p.name}.ucsf", f"{p.name}.nv"]
+        files = series.export_point(p, dest=str(tmp_path))
+        assert files == [str(tmp_path / "sparky" / f"{p.name}.ucsf"),
+                         str(tmp_path / "nv" / f"{p.name}.nv")]
+        assert all(os.path.getsize(x) > 0 for x in files)
 
 
 def test_same_kind(tmp_path):

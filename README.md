@@ -186,7 +186,8 @@ The **Series** tab processes many experiments with one recipe:
    carriers from each point's own temperature instead of copying the template's. A
    `series.com` loop is written next to the experiments to rerun the lot with NMRPipe
    alone. Each point is exported as soon as it is processed, in the formats ticked
-   under **Then export** (Sparky and NMRView by default), next to its spectrum.
+   under **Then export** (Sparky and NMRView by default), into the series folder's
+   `sparky/` and `nv/` folders.
 5. **Check phases** compares each point's phase with the template's, using NMRPipe's
    autophaser for ¹H and the peak-maximum fit for indirect dimensions, and flags
    differences above 8°.
@@ -197,6 +198,29 @@ The **Series** tab processes many experiments with one recipe:
    example after typing titrant amounts.
 
 `tools/make_test_series.py` makes a test series from one Bruker experiment.
+
+### Pseudo-3D and interleaved experiments
+
+T1, T2, CEST and relaxation dispersion experiments record their 2D planes in one
+`ser` file, and so do HetNOEs, as a pseudo-3D or interleaved in a 2D. PipeDraw
+recognises them from `acqu3s` (a real, QF dimension) and the pulse program, and
+marks them in the folder tree as **Pseudo-3D · 7 planes**.
+
+1. **Split…** (in the tree, or in the Convert tab) writes each plane as an ordinary
+   2D Bruker experiment in the experiment's `split/` folder, in the order the planes
+   were recorded. It follows `AQSEQ` and leaves out FIDs of unfinished planes or rows.
+   The original experiment isn't changed.
+2. The **Series** tab opens on `split/`, with each plane's value filled in from
+   `vdlist` (ms), `vclist` (T2 delays, from the loop length in `acqus`), the CPMG
+   frequencies (Hz), an `fq` list or the pulse program (**no NOE** and **NOE**), and the plane expected to have the most signal as the template: the
+   shortest delay or the reference.
+3. Set up the template and **Run series** as usual. Exports are named by plane and
+   value (`3_1200ms.ucsf`) in `split/sparky/` and `split/nv/`.
+
+For CPMG relaxation dispersion, each value is the frequency actually applied, and
+the constant CPMG time is in the Series log and `split/planes.txt`. Pulse programs
+that don't state their loop length show loop counts instead. Splitting non-uniformly
+sampled data isn't supported yet.
 
 ## 3D data and FIDs
 

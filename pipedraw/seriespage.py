@@ -6,12 +6,12 @@ from concurrent.futures import ThreadPoolExecutor
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from . import bruker, series, theme, volume
+from . import bruker, pseudo, series, theme, volume
 from .widgets import Card, CardHeader, InfoTip, button, hbox, heading, icon, label, vbox
 
 Qt = QtCore.Qt
 
-COLS = ("", "Experiment", "Type", "Titrant", "Check", "Status", "Phase vs template")
+COLS = ("", "Experiment", "Type", "Value", "Check", "Status", "Phase vs template")
 C_INC, C_NAME, C_TYPE, C_VALUE, C_CHECK, C_STATUS, C_DEV = range(len(COLS))
 # Phase differences from the template above this are flagged. The checks
 # scatter by a few degrees between identical-phase points (NMRPipe's
@@ -96,8 +96,8 @@ class SeriesPage(QtWidgets.QWidget):
             box.toggled.connect(lambda on, k=key: QtCore.QSettings().setValue(f"series/export_{k}", on))
             self.export_boxes[key] = box
         export_tip = InfoTip("Run series exports each point when it is processed, named by "
-                             "experiment and titrant (e.g. 12_0.5eq.ucsf), next to its "
-                             "spectrum.")
+                             "experiment and titrant (e.g. 12_0.5eq.ucsf), into the series "
+                             "folder's sparky/ and nv/ folders.")
         top.body.addLayout(hbox(self.run_btn, self.stop_btn, 12, label("Then export", "field"),
                                 self.export_boxes["ucsf"], self.export_boxes["nv"], export_tip,
                                 None, self.check_btn, self.overlay_btn, self.export_btn,
@@ -167,6 +167,9 @@ class SeriesPage(QtWidgets.QWidget):
 
     # ---- choosing the experiments ------------------------------------------------
 
+    def note(self, text):
+        self._log(text)
+
     def choose_folder(self):
         start = self.folder or os.getcwd()
         folder = QtWidgets.QFileDialog.getExistingDirectory(
@@ -183,6 +186,9 @@ class SeriesPage(QtWidgets.QWidget):
                         if bruker.is_experiment(os.path.join(self.folder, n))),
                        key=series.natural_key)
         self.points = [series.Point(os.path.join(self.folder, n)) for n in names]
+        planes = pseudo.read_values(self.folder)     # delays etc. of a split experiment
+        for p in self.points:
+            p.value = planes.get(p.name, "")
         self._custom_selection = False
         self.table.setRowCount(0)
         self.boxes = []
@@ -198,7 +204,10 @@ class SeriesPage(QtWidgets.QWidget):
                 if _exists(out):
                     p.spectrum, p.status = out, "done"
         self.template_check = None
-        self.folder_lbl.setText(os.path.basename(self.folder) + "/")
+        shown = os.path.basename(self.folder) + "/"
+        if planes:
+            shown = os.path.basename(os.path.dirname(self.folder)) + "/" + shown
+        self.folder_lbl.setText(shown)
         self.folder_lbl.setToolTip(self.folder)
         self.template_combo.blockSignals(True)
         self.template_combo.clear()
@@ -447,8 +456,7 @@ class SeriesPage(QtWidgets.QWidget):
         proc = open(os.path.join(t, "nmrproc.com")).read()
         self._log("Carried over from the template's fid.com: "
                   + (", ".join(f"-{k} {v}" for k, v in edits.items()) or "nothing"))
-        with open(os.path.join(os.path.commonpath([p.folder for p in self.points]),
-                               "series.com"), "w") as fh:
+        with open(os.path.join(self.export_dest(), "series.com"), "w") as fh:
             fh.write(series.series_script(points))
         water = self.water.isChecked()
         for p in points:
@@ -505,10 +513,14 @@ class SeriesPage(QtWidgets.QWidget):
                   + " files…")
         self._start(done, lambda p: self._export_point(p, kinds))
 
+    def export_dest(self):
+        """The series folder, which gets sparky/ and nv/ folders of exports."""
+        return self.folder
+
     def _export_point(self, p, kinds):
         """Export one processed point; a failed export leaves it processed."""
         try:
-            files = series.export_point(p, kinds)
+            files = series.export_point(p, kinds, self.export_dest())
         except Exception as exc:  # NMRPipe's message, kept in the tooltip
             p.log = (p.log + "\n" if p.log else "") + f"Export failed: {exc}"
             return "export_failed"
@@ -578,6 +590,11 @@ class SeriesPage(QtWidgets.QWidget):
             self._log(f"Finished: {ok} processed" + (f", {exported} exported" if exported else "")
                       + (f", {failed} failed" if failed else "")
                       + (f", {bad} not exported (see their status)" if bad else ""))
+            if exported:
+                kinds = self.export_kinds() or tuple(series.EXPORT_FOLDERS)
+                self._log("Exported files are in " + " and ".join(
+                    os.path.join(self.export_dest(), series.EXPORT_FOLDERS[k]) + "/"
+                    for k in kinds))
 
     def _refresh(self):
         for r in range(len(self.points)):

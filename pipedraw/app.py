@@ -8,7 +8,7 @@ import numpy as np
 import pyqtgraph as pg
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from . import autophase, bruker, contours, phase, procgen, script, series, theme, volume
+from . import autophase, bruker, contours, phase, procgen, pseudo, script, series, theme, volume
 from .scriptpanel import ScriptPanel
 from .convertpage import ConvertPage
 from .exportpage import ExportPage
@@ -141,6 +141,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.start_page.browse_requested.connect(self.open_dialog)
         self.start_page.browse_folder_requested.connect(self.open_experiment_dialog)
         self.start_page.series_requested.connect(self.open_series)
+        self.start_page.split_requested.connect(self.open_split)
         self.pages.addWidget(self.start_page)
         self.pages.addWidget(self._build_workspace())
         self.pages.addWidget(self.script_panel)
@@ -149,6 +150,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.convert_page.open_requested.connect(self.open_experiment_dialog)
         self.pages.addWidget(self.convert_page)
         self.convert_page.process_requested.connect(self.start_processing)
+        self.convert_page.split_requested.connect(self.open_split)
         self.process_page = ProcessPage()
         self.process_page.process_requested.connect(self._run_processing)
         self.process_page.open_requested.connect(self._choose_fid_for_processing)
@@ -668,6 +670,36 @@ class MainWindow(QtWidgets.QMainWindow):
     def open_series(self, folder):
         self.series_page.load_folder(folder)
         self.set_mode(SERIES)
+
+    def open_split(self, folder):
+        """Split a pseudo-3D experiment, unless done before, and open its planes
+        as a series, with the plane that has most signal as the template."""
+        lay = pseudo.layout(folder)
+        if lay is None:
+            return
+        new = not pseudo.is_split(folder)
+        if new:
+            QtWidgets.QApplication.setOverrideCursor(Qt.WaitCursor)
+            try:
+                pseudo.split(folder)
+            except (OSError, ValueError) as exc:
+                QtWidgets.QApplication.restoreOverrideCursor()
+                QtWidgets.QMessageBox.critical(self, "Could not split the experiment",
+                                               f"{folder}\n\n{exc}")
+                return
+            QtWidgets.QApplication.restoreOverrideCursor()
+        dest = pseudo.split_folder(folder)
+        template = pseudo.plane_names(lay.planes)[pseudo.default_template(lay)]
+        self.series_page.load_folder(dest, os.path.join(dest, template))
+        self.set_mode(SERIES)
+        if new:
+            self.series_page.note(f"Split into {lay.planes} planes of {lay.rows} FIDs in "
+                                  f"{dest}. Set up the template, then run the series.")
+            if lay.note:
+                self.series_page.note(lay.note)
+            if lay.missing:
+                self.series_page.note(f"This experiment stopped early: {lay.missing} FIDs were "
+                                      "not recorded, and incomplete planes or rows were left out.")
 
     def _view_series_point(self, path):
         pts = self.series_page.processed()

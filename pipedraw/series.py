@@ -228,20 +228,30 @@ def relative(point_check: dict, template_check: dict) -> dict:
             if d in template_check}
 
 
-def export_point(point: Point, kinds=("ucsf", "nv")) -> list:
-    """Write Sparky/NMRView files for one processed point; returns the paths."""
+EXPORT_FOLDERS = {"ucsf": "sparky", "nv": "nv"}
+
+
+def export_point(point: Point, kinds=("ucsf", "nv"), dest=None) -> list:
+    """Write Sparky/NMRView files for one processed point; returns the paths.
+
+    With ``dest`` (the series folder), files go to its ``sparky/`` and ``nv/``
+    folders, so the whole series is in one place; otherwise next to the spectrum."""
     if not point.spectrum:
         return []
     folder = export.work_folder(point.spectrum)
     written = []
     rel = os.path.relpath(point.spectrum, folder)
-    if "ucsf" in kinds:
-        out = os.path.join(folder, point.tag + ".ucsf")
-        export.write_ucsf(point.spectrum, out)
-        written.append(out)
-    if "nv" in kinds:
-        out = os.path.join(folder, point.tag + ".nv")
-        export.run_csh(export.nv_command(rel, os.path.basename(out)), folder, out)
+    for kind in ("ucsf", "nv"):
+        if kind not in kinds:
+            continue
+        out_dir = os.path.join(dest, EXPORT_FOLDERS[kind]) if dest else folder
+        os.makedirs(out_dir, exist_ok=True)
+        out = os.path.join(out_dir, f"{point.tag}.{kind}")
+        if kind == "ucsf":
+            export.write_ucsf(point.spectrum, out)
+        else:
+            # Relative: pipe2xyz cannot open long output paths.
+            export.run_csh(export.nv_command(rel, os.path.relpath(out, folder)), folder, out)
         written.append(out)
     return written
 

@@ -3,7 +3,7 @@ import os
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from . import bruker, theme
+from . import bruker, pseudo, theme
 from .runner import CshRunner
 from .scriptpanel import CodeEditor
 from .widgets import (Card, CardHeader, Dot, FlowLayout, InfoTip, button, clear_layout, hbox,
@@ -22,6 +22,7 @@ class ConvertPage(QtWidgets.QWidget):
     open_requested = QtCore.Signal()         # pick an experiment folder
     converted = QtCore.Signal(str)
     process_requested = QtCore.Signal(str)   # path of the converted FID
+    split_requested = QtCore.Signal(str)     # pseudo-3D experiment to split into 2D planes
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -77,6 +78,16 @@ class ConvertPage(QtWidgets.QWidget):
         self.exp_card.body.addWidget(self.exp_title)
         self.exp_card.body.addWidget(self.exp_sub)
         self.exp_card.body.addWidget(self.exp_chips)
+        self.planes_lbl = label("", "muted")
+        self.planes_lbl.setWordWrap(True)
+        self.split_btn = button("Split into 2D planes…", kind="primary",
+                                slot=lambda _=False: self.split_requested.emit(self.exp.folder),
+                                tip="Write each plane as a 2D experiment in split/ and process "
+                                    "them in the Series tab. The original is not changed.")
+        self.planes_row = QtWidgets.QWidget()
+        self.planes_row.setLayout(vbox(self.planes_lbl, hbox(self.split_btn, None), spacing=6))
+        self.planes_row.hide()
+        self.exp_card.body.addWidget(self.planes_row)
         self.left.addWidget(self.exp_card)
 
         # Parameters
@@ -388,6 +399,13 @@ class ConvertPage(QtWidgets.QWidget):
                             "mask; processing reconstructs the spectrum (SMILE).")
             chips.addWidget(pill)
         self.exp_chips.updateGeometry()
+        lay = pseudo.layout(e.folder)
+        self.planes_row.setVisible(lay is not None)
+        if lay:
+            self.planes_lbl.setText(f"{pseudo.summary(lay)}: split it to process each plane "
+                                    "as a 2D.")
+            self.split_btn.setText("Open the split planes…" if pseudo.is_split(e.folder)
+                                   else "Split into 2D planes…")
 
     def _reparse(self):
         self.fid_script = bruker.parse_fid_com(self.editor.toPlainText())

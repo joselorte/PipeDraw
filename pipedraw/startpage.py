@@ -9,7 +9,7 @@ from typing import Optional
 import nmrglue as ng
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from . import bruker, script, theme, volume
+from . import bruker, pseudo, script, theme, volume
 from .widgets import Card, CardHeader, Dot, button, clear_layout, hbox, icon, label, restyle, vbox
 
 Qt = QtCore.Qt
@@ -65,6 +65,7 @@ class Node:
     status: str = ""            # experiments: processed, converted, raw
     open_path: Optional[str] = None     # what Open opens (a processed spectrum, a file)
     experiments: int = 0        # folders: experiments directly inside
+    planes: int = 0             # experiments: 2D planes to split out of one file
 
 
 def _listdir(path):
@@ -113,8 +114,16 @@ def experiment_node(path, name=None) -> Node:
         e = bruker.load_experiment(path)
         node.what = e.pulprog + (" · NUS" if e.nus else "")
         node.size = f"{e.ndim}D · " + " × ".join(theme.nice_label(d.nucleus) for d in e.dims)
+        lay = pseudo.layout(path)
+        if lay:
+            node.planes = lay.planes
+            node.what = f"{e.pulprog} · {pseudo.summary(lay)}"
+            node.size = "2D · " + " × ".join(theme.nice_label(d.nucleus) for d in e.dims[:2])
     except Exception:  # damaged parameter files: still listed
         node.what = "Bruker experiment (parameters unreadable)"
+    if node.planes:
+        node.status = "split" if pseudo.is_split(path) else "planes"
+        return node
     spectrum = next((o for o in (_output(path, n) for n in SCRIPTS[1:5]) if o), None)
     if spectrum:
         node.status, node.open_path = "processed", spectrum
@@ -166,7 +175,11 @@ def experiment_contents(path):
     nodes += pipe_files(path)
     for n in _listdir(path):
         sub = os.path.join(path, n)
-        if os.path.isdir(sub) and n not in ("pdata",):
+        if n == pseudo.SPLIT_FOLDER and pseudo.is_split(path):
+            planes = len(pseudo.read_values(sub))
+            nodes.append(Node("folder", n, sub, f"{planes} planes, as 2D experiments",
+                              experiments=planes))
+        elif os.path.isdir(sub) and n not in ("pdata",):
             nodes += pipe_files(sub, n + "/")
     for n in _listdir(path):
         if n.lower().endswith(EXPORTS):
@@ -248,7 +261,8 @@ class DropZone(QtWidgets.QFrame):
 
 
 STATUS = {"processed": ("✓ Processed", "PIVOT_TEXT"), "converted": ("Converted", "ACCENT"),
-          "raw": ("Not converted", "MUTED")}
+          "raw": ("Not converted", "MUTED"), "planes": ("Not split", "MUTED"),
+          "split": ("Split", "ACCENT")}
 COLS = ("Name", "What it is", "Dimensions", "Status", "")
 C_NAME, C_WHAT, C_SIZE, C_STATUS, C_ACTION = range(len(COLS))
 
@@ -258,6 +272,7 @@ class FolderTree(QtWidgets.QTreeWidget):
     what is inside them; their contents are read when first expanded."""
     open_requested = QtCore.Signal(str)
     series_requested = QtCore.Signal(str)
+    split_requested = QtCore.Signal(str)
 
     def __init__(self):
         super().__init__()
@@ -313,7 +328,7 @@ class FolderTree(QtWidgets.QTreeWidget):
                 f = item.font(C_NAME)
                 f.setBold(True)
                 item.setFont(C_NAME, f)
-                if node.status != "raw":       # untouched experiments hold nothing to show
+                if node.status not in ("raw", "planes"):    # untouched: nothing to show
                     item.setChildIndicatorPolicy(QtWidgets.QTreeWidgetItem.ShowIndicator)
             if node.kind == "folder":
                 item.setIcon(C_NAME, icon("folder", theme.MUTED, 14))
@@ -344,6 +359,13 @@ class FolderTree(QtWidgets.QTreeWidget):
             out.append(small("Series…", lambda: self.series_requested.emit(node.path),
                              tip="Process these experiments (e.g. a titration) with one "
                                  "experiment's recipe"))
+        elif node.kind == "experiment" and node.planes:
+            done = node.status == "split"
+            out.append(small("Series…" if done else "Split…",
+                             lambda: self.split_requested.emit(node.path), primary=True,
+                             tip="Process the planes in the Series tab" if done else
+                                 "Write each plane as a 2D experiment in split/ and process "
+                                 "them in the Series tab. The original is not changed."))
         elif node.kind == "experiment":
             out.append(small("Convert", lambda: self.open_requested.emit(node.path),
                              primary=not node.open_path,
@@ -372,7 +394,9 @@ class FolderTree(QtWidgets.QTreeWidget):
 
     def _double_clicked(self, item, _column):
         node = item.data(0, Qt.UserRole)
-        if node.kind == "experiment":
+        if node.kind == "experiment" and node.planes:
+            self.split_requested.emit(node.path)
+        elif node.kind == "experiment":
             self.open_requested.emit(node.open_path or node.path)
         elif node.kind == "file":
             self.open_requested.emit(node.open_path)
@@ -398,6 +422,7 @@ class StartPage(QtWidgets.QWidget):
     browse_requested = QtCore.Signal()
     browse_folder_requested = QtCore.Signal()
     series_requested = QtCore.Signal(str)     # folder holding a series of experiments
+    split_requested = QtCore.Signal(str)      # pseudo-3D experiment to split into 2D planes
 
     def __init__(self):
         super().__init__()
@@ -445,6 +470,7 @@ class StartPage(QtWidgets.QWidget):
         self.tree = FolderTree()
         self.tree.open_requested.connect(self.open_requested)
         self.tree.series_requested.connect(self.series_requested)
+        self.tree.split_requested.connect(self.split_requested)
         self.filter_edit.textChanged.connect(self.tree.filter)
         self.files_card.body.addWidget(self.tree)
         main.addWidget(self.files_card)
