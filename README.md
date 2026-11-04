@@ -124,8 +124,8 @@ After converting, **Next: Process** (or the **Process** tab with an FID open)
 shows the processing settings for each dimension:
 
 - window (sine bell or Lorentz-to-Gauss), line broadening, first-point scaling;
-- zero filling, FT options (`-alt` is preselected when States-TPPI data were
-  converted as Complex), phases;
+- zero filling, FT options (`-alt` is preselected for dimensions acquired
+  States-TPPI, whether `fid.com` calls them States-TPPI or Complex), phases;
 - for the direct dimension: the region to keep, solvent filter, baseline;
 - for indirect dimensions of uniformly sampled data: linear prediction.
 

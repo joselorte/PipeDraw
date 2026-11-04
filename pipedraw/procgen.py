@@ -76,12 +76,12 @@ def defaults(fid_path: str, exp: Optional[bruker.Experiment] = None) -> Settings
         fid_com = os.path.join(exp.folder, "fid.com")
         fs = bruker.parse_fid_com(open(fid_com).read()) if os.path.isfile(fid_com) else None
         if fs is not None:
-            for chk in bruker.checks(exp, fs):
-                # Complex-mode States-TPPI data needs FT -alt.
-                if chk.fix and chk.fix[0].endswith("MODE") and chk.fix[1] == "States-TPPI":
-                    d = chk.fix[0][0]
-                    if d in s.dims:
-                        s.dims[d].ft = "alt"
+            # States-TPPI data need FT -alt whichever mode fid.com names: the
+            # generated script's plain FT doesn't alternate on its own, and the
+            # spectrum would come out displaced by half the sweep width.
+            for d, dim in bruker.match_dims(exp, fs).items():
+                if dim.mode_name == "States-TPPI" and d in s.dims:
+                    s.dims[d].ft = "alt"
     # Keep the phases of an existing script for the same data.
     existing = script.find_script(folder)
     if existing:

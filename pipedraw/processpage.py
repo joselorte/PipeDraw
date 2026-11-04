@@ -230,7 +230,7 @@ class ProcessPage(QtWidgets.QWidget):
                 w["lp"].toggled.connect(self._changed)
                 grid.addWidget(w["lp"], row, 0, 1, 4)
             if ds.ft == "alt":
-                w["ft"].setToolTip("-alt: acquired States-TPPI but converted as Complex")
+                w["ft"].setToolTip("-alt: acquired States-TPPI")
             grid.setColumnStretch(4, 1)
             card.body.addLayout(grid)
             self.dims_box.addWidget(card)

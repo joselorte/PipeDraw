@@ -118,6 +118,23 @@ def test_hsqc_generate_and_process(tmp_path):
 HNCA = os.path.join(ROOT, "testdata", "3D", "HNCA")
 
 
+@pytest.mark.skipif(not os.path.isdir(os.path.join(HNCA, "fid")),
+                    reason="needs the converted testdata/3D/HNCA")
+@pytest.mark.parametrize("mode", ["Complex", "States-TPPI"])
+def test_states_tppi_gets_ft_alt_whatever_fid_com_calls_it(tmp_path, mode):
+    """Accepting the check's fix (States-TPPI in fid.com) must not lose FT -alt:
+    without it the 13C dimension comes out displaced by half its sweep width."""
+    for n in ("acqus", "acqu2s", "acqu3s", "pulseprogram", "nuslist"):
+        shutil.copy(os.path.join(HNCA, n), tmp_path)
+    text = bruker.set_option(bruker.auto_fid_com(HNCA)[0], "zMODE", mode)
+    (tmp_path / "fid.com").write_text(text)
+    (tmp_path / "ser").touch()
+    exp = bruker.load_experiment(str(tmp_path))
+    s = procgen.defaults(os.path.join(HNCA, "fid", "test%03d.fid"), exp)
+    assert s.dims["z"].ft == "alt"       # 13C, FnMODE 5
+    assert s.dims["y"].ft == "None"      # 15N, Echo-AntiEcho
+
+
 @pytest.mark.skipif(not (os.path.isdir(HNCA) and bruker.have_nmrpipe()
                          and os.environ.get("PIPEDRAW_SLOW")),
                     reason="needs testdata/3D/HNCA, NMRPipe and PIPEDRAW_SLOW=1 (~1.5 min)")
