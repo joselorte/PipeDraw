@@ -10,7 +10,8 @@ rerun or shared without it.
 
 **You need** NMRPipe, installed and set up for `csh` (its installer adds the setup to
 `~/.cshrc`; see the [NMRPipe site](https://www.ibbr.umd.edu/nmrpipe/)), and
-Python 3.10 or newer. PipeDraw is installed with
+Python 3.12 or newer. On older versions phasing large 3D data can abort with
+`Fatal Python error: none_dealloc: deallocating None`. PipeDraw is installed with
 [pipx](https://pipx.pypa.io), which keeps it in its own environment and puts a
 `pipedraw` command on your path.
 
@@ -33,6 +34,17 @@ pipx install git+https://github.com/joselorte/PipeDraw
 ```
 
 (Ubuntu/Debian package names; `libxcb-cursor0` is needed by Qt's window system support.)
+
+If your system Python is older than 3.12 (`python3 --version`; Ubuntu 22.04 has
+3.10), get a newer one with [uv](https://docs.astral.sh/uv/) and install with that:
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+~/.local/bin/uv python install 3.12
+pipx install --force --python "$(~/.local/bin/uv python find 3.12)" git+https://github.com/joselorte/PipeDraw
+```
+
+The same `pipx install --force` line moves an existing installation to Python 3.12.
 
 ### Windows (WSL2)
 

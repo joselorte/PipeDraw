@@ -7,7 +7,7 @@ name = "pipedraw"
 dynamic = ["version"]
 description = "Viewer, phasing and processing front end for NMRPipe: convert Bruker data, process, phase 2D/3D spectra, export"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
 authors = [{ name = "José L. Ortega-Roldán" }]
